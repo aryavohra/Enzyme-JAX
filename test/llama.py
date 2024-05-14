@@ -309,7 +309,7 @@ class Llama(absltest.TestCase):
         jfunc = jax.jit(func)
 
         efunc = jax.jit(
-            enzyme_jax.enzyme_jax_ir(argv=argv, pipeline_options=pipeline)(func)
+            enzyme_jax.enzyme_jax_ir(pipeline_options=pipeline)(func)
         )
 
         number = 100
@@ -419,7 +419,7 @@ class Llama(absltest.TestCase):
                 argv=argv,
                 pipeline_options=enzyme_jax.JaXPipeline(
                     "inline{default-pipeline=canonicalize max-iterations=4},"
-                    + "canonicalize,cse,enzyme-hlo-opt,cse"
+                    + "canonicalize,cse,enzyme-hlo-opt,cse,equality-saturation-pass"
                 ),
             )(jrev)
         )
