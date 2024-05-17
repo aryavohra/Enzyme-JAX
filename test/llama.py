@@ -313,7 +313,7 @@ class Llama(absltest.TestCase):
         )
 
         number = 100
-        if True:
+        if False:
             eres = efunc(x, weights, key_cache, value_cache)
             print("Enzyme primal", eres)
             res = jfunc(x, weights, key_cache, value_cache)
@@ -350,7 +350,7 @@ class Llama(absltest.TestCase):
         # jfunc = jax.jit(partial(forward, config))
         # mlir = jax.jit(partial(forward, config)).lower(1, weights, key_cache, value_cache).compiler_ir(dialect="mhlo")
 
-        if True:
+        if False:
 
             @jax.jit
             def jfwd(x, dx, weights, dweights, kc, dkc, vc, dvc):
@@ -403,7 +403,7 @@ class Llama(absltest.TestCase):
         def jrev(x, weights, kc, vc, dx, dkc, dvc):
             primals, f_vjp = jax.vjp(jfunc, x, weights, kc, vc)
             return f_vjp(dx)  # , dkc, dvc)
-
+        '''
         @jax.jit
         def erev(x, weights, kc, vc, dx, dkc, dvc):
             primals, f_vjp = jax.vjp(efunc, x, weights, kc, vc)
@@ -413,7 +413,7 @@ class Llama(absltest.TestCase):
         print("Enzyme rev", eres)
         jres = jrev(x, weights, key_cache, value_cache, dx, dkc, dvc)
         print("Jax rev", jres)
-
+        '''
         jrev2 = jax.jit(
             enzyme_jax.enzyme_jax_ir(
                 argv=argv,
@@ -427,6 +427,7 @@ class Llama(absltest.TestCase):
         jres2 = jrev2(x, weights, key_cache, value_cache, dx, dkc, dvc)
         print("Jax2 rev", jres2)
 
+        '''
         print(
             "Enzyme rev",
             timeit.Timer(
@@ -475,6 +476,7 @@ class Llama(absltest.TestCase):
                 },
             ).timeit(number),
         )
+        '''
 
 
 if __name__ == "__main__":
