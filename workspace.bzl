@@ -7,6 +7,8 @@ ENZYME_SHA256 = "7ac6047d15358434ec77833ebfd96704f5784dea0c79aa2408d2b4bc0818377
 PYRULES_COMMIT = "fe33a4582c37499f3caeb49a07a78fc7948a8949"
 PYRULES_SHA256 = "cfa6957832ae0e0c7ee2ccf455a888a291e8419ed8faf45f4420dd7414d5dd96"
 
+REACTANT_COMMIT = "0f7a912ca9cfd2ce1a96491052a16eab899cc9a7"
+
 XLA_PATCHES = [
     """
     sed -i.bak0 "s/\\/\\/third_party:repo.bzl/@bazel_tools\\/\\/tools\\/build_defs\\/repo:http.bzl/g" third_party/llvm/workspace.bzl

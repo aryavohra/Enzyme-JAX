@@ -1,4 +1,4 @@
-load("//:workspace.bzl", "JAX_COMMIT", "JAX_SHA256", "ENZYME_COMMIT", "ENZYME_SHA256", "PYRULES_COMMIT", "PYRULES_SHA256", "XLA_PATCHES")
+load("//:workspace.bzl", "JAX_COMMIT", "JAX_SHA256", "ENZYME_COMMIT", "ENZYME_SHA256", "PYRULES_COMMIT", "PYRULES_SHA256", "REACTANT_COMMIT", "XLA_PATCHES")
 load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 
 http_archive(
@@ -57,6 +57,12 @@ http_archive(
     urls = ["https://github.com/EnzymeAD/Enzyme/archive/{commit}.tar.gz".format(commit = ENZYME_COMMIT)],
 )
 
+http_archive(
+    name = "reactant_extra",
+    # TODO: SHA256
+    strip_prefix = "Reactant.jl-" + REACTANT_COMMIT + "/deps/ReactantExtra",
+    urls = ["https://github.com/EnzymeAD/Reactant.jl/archive/{commit}.tar.gz".format(commit = REACTANT_COMMIT)],
+)
 
 load("@xla//third_party/llvm:workspace.bzl", llvm = "repo")
 llvm("llvm-raw")
