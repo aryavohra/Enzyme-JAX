@@ -50,21 +50,17 @@ class EqualitySaturationPass : public mlir::PassWrapper<EqualitySaturationPass, 
 
     mlir::Operation::CloneOptions cloneOptions;
     cloneOptions.cloneOperands();
-
     mlir::Operation *newOp = op->clone(cloneOptions);
 
-    // Create a func.func to wrap newOp arounds
-
+    // Create a func.func to wrap newOp around
     mlir::FunctionType funcType = mlir::FunctionType::get(&context, {}, newOp->getResultTypes());
-
     mlir::func::FuncOp funcOp = builder.create<mlir::func::FuncOp>(location, "main", funcType);
     block->push_back(funcOp);
 
     mlir::Block *entryBlock = funcOp.addEntryBlock();
 
-    auto operandTypes = newOp->getOperandTypes();
-
     llvm::SmallVector<mlir::Value> dummyInputs;
+    auto operandTypes = newOp->getOperandTypes();
 
     for (auto type : operandTypes) {
       // Zero-initialise inputs with same operand shape
@@ -91,7 +87,6 @@ class EqualitySaturationPass : public mlir::PassWrapper<EqualitySaturationPass, 
 
   void runOnOperation() override {
     mlir::ModuleOp modOp = getOperation();
-    // Simply walks through all operations, does nothing else.
 
     modOp.walk([](mlir::Operation *op) {
       std::string opName = op->getName().getStringRef().str();
@@ -116,7 +111,7 @@ class EqualitySaturationPass : public mlir::PassWrapper<EqualitySaturationPass, 
       }
 
       std::cout << "Printing module" << std::endl;
-      // Print the module
+
       wrapperModule.print(llvm::outs());
       llvm::outs() << "\n";
       /*
