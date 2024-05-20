@@ -99,9 +99,6 @@ class EqualitySaturationPass : public mlir::PassWrapper<EqualitySaturationPass, 
       mlir::MLIRContext context(registry);
       RegisterDialects(wrap(&context));
 
-      // Wrap operation into a module with dummy inputs
-      mlir::OpBuilder builder(&context);
-      mlir::Location location = builder.getUnknownLoc();
       mlir::ModuleOp wrapperModule = EqualitySaturationPass::createModuleFromOperation(context, op);
 
       std::cout << "Verifying module\n";
