@@ -1,4 +1,4 @@
-load("//:workspace.bzl", "JAX_COMMIT", "JAX_SHA256", "ENZYME_COMMIT", "ENZYME_SHA256", "PYRULES_COMMIT", "PYRULES_SHA256", "REACTANT_COMMIT", "XLA_PATCHES")
+load("//:workspace.bzl", "JAX_COMMIT", "JAX_SHA256", "ENZYME_COMMIT", "ENZYME_SHA256", "PYRULES_COMMIT", "PYRULES_SHA256", "XLA_PATCHES")
 load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 
 http_archive(
@@ -58,10 +58,14 @@ http_archive(
 )
 
 http_archive(
-    name = "reactant_extra",
-    # TODO: SHA256
-    strip_prefix = "Reactant.jl-" + REACTANT_COMMIT + "/deps/ReactantExtra",
-    urls = ["https://github.com/EnzymeAD/Reactant.jl/archive/{commit}.tar.gz".format(commit = REACTANT_COMMIT)],
+    name = "upb",
+    sha256 = "61d0417abd60e65ed589c9deee7c124fe76a4106831f6ad39464e1525cef1454",
+    strip_prefix = "upb-9effcbcb27f0a665f9f345030188c0b291e32482",
+    patch_cmds = [
+        "sed -i.bak0 's/@bazel_tools\\/\\/platforms:windows/@platforms\\/\\/os:windows/g' BUILD",
+        "sed -i.bak0 's/-Werror//g' BUILD"
+    ],
+    url = "https://github.com/protocolbuffers/upb/archive/9effcbcb27f0a665f9f345030188c0b291e32482.tar.gz"
 )
 
 load("@xla//third_party/llvm:workspace.bzl", llvm = "repo")
