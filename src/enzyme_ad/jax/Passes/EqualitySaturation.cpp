@@ -10,6 +10,7 @@
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/Value.h"
 #include "mlir/IR/Verifier.h"
+#include "mlir/IR/IRMapping.h"
 #include "mlir/Pass/Pass.h"
 #include "stablehlo/dialect/StablehloOps.h"
 #include "llvm/ADT/SmallVector.h"
@@ -51,8 +52,6 @@ public:
     xla::PjRtBuffer* res[numResults];
     uint8_t futures = 0;
 
-    std::cout << "Executing\n";
-
     auto t1 = std::chrono::high_resolution_clock::now();
 
     for (unsigned i = 0; i < warmup + repetitions; i++) {
@@ -73,29 +72,45 @@ private:
    * Create a clone of the operation in the new context recursively (i.e. going down to the regions).
    * Just using op->clone() will preserve context of the original operation, which poses a problem later
    * since stablehlo -> mhlo legalization pass will not match the new operation. 
+   * 
+   * Like the normal op->clone(), any operands that use values outside of the operations are remapped using 
+   * the map that is provided (leaving them alone if no entry is present).
+   * 
+   * TODO: Surely there's a simpler way to do this?
   */
-  static mlir::Operation* cloneOpInContext(mlir::OpBuilder &builder, mlir::Operation* op) {
+  static mlir::Operation *cloneOpInContext(mlir::OpBuilder &builder,
+                                           mlir::Operation *op,
+                                           mlir::IRMapping& mapping) {
     mlir::Location location = builder.getUnknownLoc();
 
     // Recursively clone regions
     llvm::SmallVector<std::unique_ptr<mlir::Region>> regions;
-    /*
+
     for (auto& region : op->getRegions()) {
       auto newRegion = std::make_unique<mlir::Region>();
+
       for (auto& block : region.getBlocks()) {
         auto newBlock = new mlir::Block();
-        for (auto argType : block.getArgumentTypes()) {
-          newBlock->addArgument(argType, location);
+
+        // Map from old block arguments to new ones
+        for (auto arg : block.getArguments()) {
+          mapping.map(arg, newBlock->addArgument(arg.getType(), location));
         }
 
         for (auto& nestedOp : block.getOperations()) {
-          newBlock->push_back(cloneOpInContext(builder, &nestedOp));
+          auto *newNestedOp = cloneOpInContext(builder, &nestedOp, mapping);  
+          newBlock->push_back(newNestedOp);
+          
+          // Map result of old operation to that of new operation, so that operations after can use it
+          for (int i = 0; i < nestedOp.getNumResults(); i++) {
+            mapping.map(nestedOp.getResult(i), newNestedOp->getResult(i));
+          }
         }
         newRegion->push_back(newBlock);
       }
       regions.push_back(std::move(newRegion));
     }
-    */
+
     mlir::OperationState opState(location, 
                                  op->getName().getStringRef().str(),   // Use string to make a new name, rather than reusing the OperationName
                                  op->getOperands(),
@@ -104,7 +119,18 @@ private:
                                  {},
                                  regions);
 
-    return builder.create(opState);
+    auto *newOp = builder.create(opState);
+    
+    for (int i = 0; i < newOp->getNumOperands(); i++) {
+      newOp->setOperand(i, mapping.lookupOrDefault(newOp->getOperand(i)));
+    }
+
+    return newOp;
+  }
+
+  static mlir::Operation *cloneOpInContext(mlir::OpBuilder &builder, mlir::Operation *op) {
+    mlir::IRMapping mapping;
+    return cloneOpInContext(builder, op, mapping);
   }
 
   /**
@@ -166,7 +192,7 @@ private:
     RegisterDialects(wrap(&context));
 
     mlir::ModuleOp wrapperModule = createModuleFromOperation(context, op);
-    llvm::outs() << wrapperModule << '\n';
+    // llvm::outs() << wrapperModule << '\n';
 
     if (mlir::failed(mlir::verify(wrapperModule))) {
       llvm::errs() << "Module verification error\n";
@@ -192,10 +218,11 @@ class EqualitySaturationPass : public mlir::PassWrapper<EqualitySaturationPass, 
     modOp.walk([](mlir::Operation *op) {
       std::string opName = op->getName().getStringRef().str();
       llvm::outs() << "Operation name: " << opName << "\n";
-      if (op->getDialect()->getNamespace() != "stablehlo" || opName == "stablehlo.constant" || opName == "stablehlo.return") return;
+      // TODO: have a whitelist in the cost function (returning 0 for everything else) instead?
+      if (op->getDialect()->getNamespace() != "stablehlo" || opName == "stablehlo.constant" || opName == "stablehlo.return" || opName == "stablehlo.compare") return;
 
       auto cost = OperationTimer::getCost(op, 100, 100);
-      std::cout << "Cost: " << cost << '\n';
+      llvm::outs() << "Cost: " << cost << "\n\n";
     });
   }
 };
