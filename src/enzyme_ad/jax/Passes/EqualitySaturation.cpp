@@ -14,6 +14,7 @@
 #include "stablehlo/dialect/StablehloOps.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/Casting.h"
 #include "src/enzyme_ad/jax/deps/include/ReactantExtra.h"
 
 #include "xla/pjrt/cpu/cpu_client.h"
@@ -26,21 +27,91 @@
 
 #include <fstream>
 #include <iostream>
+#include <string>
+#include <chrono>
 
 #define DEBUG_TYPE "enzyme"
 
+// bool logsInitialized = false;
 
-namespace {
-class EqualitySaturationPass : public mlir::PassWrapper<EqualitySaturationPass, mlir::OperationPass<mlir::ModuleOp>> {
+class OperationTimer {
+public:
+  /**
+   * Measure cost of operation (execution time in microseconds) by running it many times and measuring the time taken.
+  */
+  static uint64_t getCost(mlir::Operation* op, unsigned warmup, unsigned repetitions) {
+    if (!logsInitialized) {
+      InitializeLogs();
+      logsInitialized = true;
+    }
 
-  mlir::StringRef getArgument() const override { return "equality-saturation-pass"; }
-  mlir::StringRef getDescription() const override { return "Optimizes HLO graph using a Rust-based optimizer"; }
+    auto executable = prepareExecutable(op);
+
+    unsigned numResults = op->getNumResults();
+    xla::PjRtBuffer* res[numResults];
+    uint8_t futures = 0;
+
+    std::cout << "Executing\n";
+
+    auto t1 = std::chrono::high_resolution_clock::now();
+
+    for (unsigned i = 0; i < warmup + repetitions; i++) {
+      if (i == warmup) t1 = std::chrono::high_resolution_clock::now();
+      XLAExecute(executable, 0, nullptr, nullptr, numResults, res, &futures, nullptr);
+    }
+
+    auto t2 = std::chrono::high_resolution_clock::now();
+
+    auto dur = t2 - t1;
+    return std::chrono::duration_cast<std::chrono::microseconds>(dur).count();
+  }
+
+private:
+  inline static bool logsInitialized;
 
   /**
-   * Wrap operation into a module, with dummy (constant zero) inputs as its operands.
-   * Doesn't mutate op (instead it creates a copy).
+   * Create a clone of the operation in the new context recursively (i.e. going down to the regions).
+   * Just using op->clone() will preserve context of the original operation, which poses a problem later
+   * since stablehlo -> mhlo legalization pass will not match the new operation. 
   */
-  static mlir::ModuleOp createModuleFromOperation(mlir::MLIRContext& context, mlir::Operation* op) {
+  static mlir::Operation* cloneOpInContext(mlir::OpBuilder &builder, mlir::Operation* op) {
+    mlir::Location location = builder.getUnknownLoc();
+
+    // Recursively clone regions
+    llvm::SmallVector<std::unique_ptr<mlir::Region>> regions;
+    /*
+    for (auto& region : op->getRegions()) {
+      auto newRegion = std::make_unique<mlir::Region>();
+      for (auto& block : region.getBlocks()) {
+        auto newBlock = new mlir::Block();
+        for (auto argType : block.getArgumentTypes()) {
+          newBlock->addArgument(argType, location);
+        }
+
+        for (auto& nestedOp : block.getOperations()) {
+          newBlock->push_back(cloneOpInContext(builder, &nestedOp));
+        }
+        newRegion->push_back(newBlock);
+      }
+      regions.push_back(std::move(newRegion));
+    }
+    */
+    mlir::OperationState opState(location, 
+                                 op->getName().getStringRef().str(),   // Use string to make a new name, rather than reusing the OperationName
+                                 op->getOperands(),
+                                 op->getResultTypes(),
+                                 op->getAttrs(),
+                                 {},
+                                 regions);
+
+    return builder.create(opState);
+  }
+
+  /**
+   * Wrap operation into a module, with dummy (constant zero) inputs as
+   * its operands. Doesn't mutate op (instead it creates a copy).
+   */
+  static mlir::ModuleOp createModuleFromOperation(mlir::MLIRContext &context, mlir::Operation *op) {
     // Wrap operation into a module with dummy inputs
     mlir::OpBuilder builder(&context);
     mlir::Location location = builder.getUnknownLoc();
@@ -48,19 +119,17 @@ class EqualitySaturationPass : public mlir::PassWrapper<EqualitySaturationPass, 
 
     auto block = wrapperModule.getBodyRegion().begin();
 
-    mlir::Operation::CloneOptions cloneOptions;
-    cloneOptions.cloneOperands();
-    mlir::Operation *newOp = op->clone(cloneOptions);
+    auto *newOp = cloneOpInContext(builder, op);
 
     // Create a func.func to wrap newOp around
-    mlir::FunctionType funcType = mlir::FunctionType::get(&context, {}, newOp->getResultTypes());
+    mlir::FunctionType funcType = mlir::FunctionType::get(&context, {}, op->getResultTypes());
     mlir::func::FuncOp funcOp = builder.create<mlir::func::FuncOp>(location, "main", funcType);
     block->push_back(funcOp);
 
     mlir::Block *entryBlock = funcOp.addEntryBlock();
 
     llvm::SmallVector<mlir::Value> dummyInputs;
-    auto operandTypes = newOp->getOperandTypes();
+    auto operandTypes = op->getOperandTypes();
 
     for (auto type : operandTypes) {
       // Zero-initialise inputs with same operand shape
@@ -77,6 +146,7 @@ class EqualitySaturationPass : public mlir::PassWrapper<EqualitySaturationPass, 
       newOp->setOperand(i, dummyInputs[i]);
       entryBlock->push_back(dummyInputs[i].getDefiningOp());
     }
+
     entryBlock->push_back(newOp);
     
     auto returnOp = builder.create<mlir::func::ReturnOp>(location, newOp->getResults());
@@ -85,44 +155,47 @@ class EqualitySaturationPass : public mlir::PassWrapper<EqualitySaturationPass, 
     return wrapperModule;
   }
 
-  void runOnOperation() override {
+  /**
+   * Wrap and compile operation into a PjRtLoadedExecutable, to be passed into XLAExecute.
+  */
+  static xla::PjRtLoadedExecutable* prepareExecutable(mlir::Operation *op) {
+    mlir::DialectRegistry registry;
+    InitializeRegistryAndPasses(wrap(&registry));
+
+    mlir::MLIRContext context(registry);
+    RegisterDialects(wrap(&context));
+
+    mlir::ModuleOp wrapperModule = createModuleFromOperation(context, op);
+    llvm::outs() << wrapperModule << '\n';
+
+    if (mlir::failed(mlir::verify(wrapperModule))) {
+      llvm::errs() << "Module verification error\n";
+    }
+
+    // TODO: GPU
+    xla::PjRtClient *client = MakeCPUClient(0, 1, 1);
+
+    xla::PjRtLoadedExecutable *executable = ClientCompile(client, wrap(wrapperModule));
+
+    return executable;
+  }
+};
+
+namespace {
+class EqualitySaturationPass : public mlir::PassWrapper<EqualitySaturationPass, mlir::OperationPass<mlir::ModuleOp>> {
+  mlir::StringRef getArgument() const override { return "equality-saturation-pass"; }
+  mlir::StringRef getDescription() const override { return "Optimizes HLO graph using a Rust-based optimizer"; }
+
+  void runOnOperation() override {    
     mlir::ModuleOp modOp = getOperation();
 
     modOp.walk([](mlir::Operation *op) {
       std::string opName = op->getName().getStringRef().str();
-      
-      std::cout << "Operation name: " << opName << "\n";
+      llvm::outs() << "Operation name: " << opName << "\n";
+      if (op->getDialect()->getNamespace() != "stablehlo" || opName == "stablehlo.constant" || opName == "stablehlo.return") return;
 
-      mlir::DialectRegistry registry;
-      InitializeRegistryAndPasses(wrap(&registry));
-
-      mlir::MLIRContext context(registry);
-      RegisterDialects(wrap(&context));
-
-      mlir::ModuleOp wrapperModule = EqualitySaturationPass::createModuleFromOperation(context, op);
-
-      std::cout << "Verifying module\n";
-
-      if (mlir::failed(mlir::verify(wrapperModule))) {
-        llvm::errs() << "Module verification error\n";
-      }
-
-      std::cout << "Printing module" << std::endl;
-
-      wrapperModule.print(llvm::outs());
-      llvm::outs() << "\n";
-      /*
-      // TODO: GPU
-      xla::PjRtClient* client = MakeCPUClient(0, 1, 1);
-
-      std::cout << "Compiling\n";
-      xla::PjRtLoadedExecutable* executable = ClientCompile(client, wrap(wrapperModule));
-      std::cout << "Compiled executable\n";
-
-      std::cout << "Executing\n";
-      XLAExecute(executable, 0, nullptr, nullptr, 0, nullptr, nullptr, nullptr);
-      std::cout << "Executed\n";
-      */
+      auto cost = OperationTimer::getCost(op, 100, 100);
+      std::cout << "Cost: " << cost << '\n';
     });
   }
 };
