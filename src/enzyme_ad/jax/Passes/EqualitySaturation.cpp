@@ -41,6 +41,13 @@ public:
    * Measure cost of operation (execution time in microseconds) by running it many times and measuring the time taken.
   */
   static uint64_t getCost(mlir::Operation* op, unsigned warmup, unsigned repetitions) {
+    std::string opName = op->getName().getStringRef().str();
+
+    // TODO: Have a whitelist instead?
+    if (op->getDialect()->getNamespace() != "stablehlo" || opName == "stablehlo.constant" 
+        || opName == "stablehlo.return" || opName == "stablehlo.compare")
+      return 0;
+
     if (!logsInitialized) {
       InitializeLogs();
       logsInitialized = true;
@@ -216,10 +223,7 @@ class EqualitySaturationPass : public mlir::PassWrapper<EqualitySaturationPass, 
     mlir::ModuleOp modOp = getOperation();
 
     modOp.walk([](mlir::Operation *op) {
-      std::string opName = op->getName().getStringRef().str();
-      llvm::outs() << "Operation name: " << opName << "\n";
-      // TODO: have a whitelist in the cost function (returning 0 for everything else) instead?
-      if (op->getDialect()->getNamespace() != "stablehlo" || opName == "stablehlo.constant" || opName == "stablehlo.return" || opName == "stablehlo.compare") return;
+      llvm::outs() << "Operation name: " << op->getName() << "\n";
 
       auto cost = OperationTimer::getCost(op, 100, 100);
       llvm::outs() << "Cost: " << cost << "\n\n";
