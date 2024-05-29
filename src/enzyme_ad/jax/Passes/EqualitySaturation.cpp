@@ -41,6 +41,11 @@ public:
    * Measure cost of operation (execution time in microseconds) by running it many times and measuring the time taken.
   */
   static uint64_t getCost(mlir::Operation* op, unsigned warmup, unsigned repetitions) {
+    if (!logsInitialized) {
+      InitializeLogs();
+      logsInitialized = true;
+    }
+
     std::string opName = op->getName().getStringRef().str();
 
     // TODO: Have a whitelist instead?
@@ -48,12 +53,15 @@ public:
         || opName == "stablehlo.return" || opName == "stablehlo.compare")
       return 0;
 
-    if (!logsInitialized) {
-      InitializeLogs();
-      logsInitialized = true;
-    }
+    mlir::DialectRegistry registry;
+    InitializeRegistryAndPasses(wrap(&registry));
 
-    auto executable = prepareExecutable(op);
+    mlir::MLIRContext context(registry);
+    RegisterDialects(wrap(&context));
+
+    mlir::ModuleOp wrapperModule = createModuleFromOperation(context, op);
+
+    auto executable = prepareExecutable(wrapperModule, op);
 
     unsigned numResults = op->getNumResults();
     xla::PjRtBuffer* res[numResults];
@@ -68,8 +76,19 @@ public:
 
     auto t2 = std::chrono::high_resolution_clock::now();
 
-    auto dur = t2 - t1;
-    return std::chrono::duration_cast<std::chrono::microseconds>(dur).count();
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
+
+    // Cleanup
+    for (int i = 0; i < numResults; i++) {
+      PjRtBufferFree(res[i]);
+    }
+
+    FreeClient(executable->client());
+    ExecutableFree(executable);
+
+    wrapperModule.erase();
+
+    return duration;
   }
 
 private:
@@ -100,7 +119,7 @@ private:
         auto newBlock = new mlir::Block();
 
         // Map from old block arguments to new ones
-        for (auto arg : block.getArguments()) {
+        for (auto& arg : block.getArguments()) {
           mapping.map(arg, newBlock->addArgument(arg.getType(), location));
         }
 
@@ -185,22 +204,13 @@ private:
     auto returnOp = builder.create<mlir::func::ReturnOp>(location, newOp->getResults());
     entryBlock->push_back(returnOp);
 
-    return wrapperModule;
+    return std::move(wrapperModule);
   }
 
   /**
    * Wrap and compile operation into a PjRtLoadedExecutable, to be passed into XLAExecute.
   */
-  static xla::PjRtLoadedExecutable* prepareExecutable(mlir::Operation *op) {
-    mlir::DialectRegistry registry;
-    InitializeRegistryAndPasses(wrap(&registry));
-
-    mlir::MLIRContext context(registry);
-    RegisterDialects(wrap(&context));
-
-    mlir::ModuleOp wrapperModule = createModuleFromOperation(context, op);
-    // llvm::outs() << wrapperModule << '\n';
-
+  static xla::PjRtLoadedExecutable* prepareExecutable(mlir::ModuleOp &wrapperModule, mlir::Operation *op) {
     if (mlir::failed(mlir::verify(wrapperModule))) {
       llvm::errs() << "Module verification error\n";
     }
