@@ -211,6 +211,10 @@ cc_library(
         [
             "Implementations/*.cpp",
             "Passes/*.cpp",
+	    "Passes/target/debug/libtensat.a",
+	    "Passes/target/cxxbridge/tensat/src/input.rs.cc",
+	    "Passes/target/cxxbridge/tensat/src/input.rs.h",
+	    "Passes/target/cxxbridge/rust/cxx.h"
         ],
     ),
     hdrs = glob([
@@ -224,6 +228,7 @@ cc_library(
         "-Werror=unused-result",
     ],
     deps = [
+	# "//src/enzyme_ad/jax/tensat:tensat_input_bridge",
         ":EnzymeXLAPassesIncGen",
         ":EnzyeHLOPatternsIncGen",
         ":mhlo-derivatives",
@@ -367,12 +372,8 @@ pybind_extension(
         "@llvm-project//mlir:MLIRBindingsPythonHeaders",
         "@stablehlo//:stablehlo_passes",
         "@xla//xla/hlo/ir:hlo",
-        "@xla//xla/mlir/backends/cpu/transforms:passes",
-        "@xla//xla/mlir/memref/transforms:passes",
-        "@xla//xla/mlir/runtime/transforms:passes",
         "@xla//xla/mlir_hlo:all_passes",
         "@xla//xla/mlir_hlo:deallocation_passes",
-        "@xla//xla/mlir_hlo:lhlo",
         "@xla//xla/service/cpu:cpu_executable",
         "@xla//xla/stream_executor:stream_executor_impl",
     ],
