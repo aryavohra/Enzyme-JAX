@@ -6,17 +6,18 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/IRMapping.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/Operation.h"
+#include "mlir/IR/OperationSupport.h"
 #include "mlir/IR/Value.h"
 #include "mlir/IR/Verifier.h"
-#include "mlir/IR/IRMapping.h"
 #include "mlir/Pass/Pass.h"
+#include "src/enzyme_ad/jax/deps/include/ReactantExtra.h"
 #include "stablehlo/dialect/StablehloOps.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/Casting.h"
-#include "src/enzyme_ad/jax/deps/include/ReactantExtra.h"
+#include "llvm/Support/raw_ostream.h"
 
 #include "xla/pjrt/cpu/cpu_client.h"
 #include "xla/pjrt/gpu/se_gpu_pjrt_client.h"
@@ -33,14 +34,43 @@
 
 #define DEBUG_TYPE "enzyme"
 
-// bool logsInitialized = false;
+using namespace mlir;
+
+class OperationMapInfo : public llvm::DenseMapInfo<Operation*> {
+public:
+  static unsigned getHashValue(const Operation* val) {
+    return OperationEquivalence::computeHash(
+      const_cast<Operation*>(val),
+      // Operands, values and locations don't matter for runtime - we just
+      // need the operation, attributes and types to be the same.
+      OperationEquivalence::ignoreHashValue,
+      OperationEquivalence::ignoreHashValue,
+      OperationEquivalence::IgnoreLocations);
+  }
+
+  // Adapted from llvm-project/mlir/lib/Transforms/CSE.cpp
+  static bool isEqual(const Operation* lhsC, const Operation* rhsC) {
+    auto* lhs = const_cast<Operation*>(lhsC);
+    auto* rhs = const_cast<Operation*>(rhsC);
+    if (lhs == rhs)
+      return true;
+    if (lhs == getTombstoneKey() || lhs == getEmptyKey() ||
+        rhs == getTombstoneKey() || rhs == getEmptyKey())
+      return false;
+    return OperationEquivalence::isEquivalentTo(
+        lhs, rhs,
+        OperationEquivalence::ignoreValueEquivalence,
+        nullptr,
+        OperationEquivalence::IgnoreLocations);
+  }
+};
 
 class OperationTimer {
 public:
   /**
    * Measure cost of operation (execution time in microseconds) by running it many times and measuring the time taken.
   */
-  static uint64_t getCost(mlir::Operation* op, unsigned warmup, unsigned repetitions) {
+  static uint64_t getCost(Operation* op, unsigned warmup, unsigned repetitions) {
     if (!logsInitialized) {
       InitializeLogs();
       logsInitialized = true;
@@ -52,14 +82,18 @@ public:
     if (op->getDialect()->getNamespace() != "stablehlo" || opName == "stablehlo.constant" 
         || opName == "stablehlo.return" || opName == "stablehlo.compare")
       return 0;
+    
+    if (runtimeCache.contains(op)) {
+      return runtimeCache[op];
+    }
 
-    mlir::DialectRegistry registry;
+    DialectRegistry registry;
     InitializeRegistryAndPasses(wrap(&registry));
 
-    mlir::MLIRContext context(registry);
+    MLIRContext context(registry);
     RegisterDialects(wrap(&context));
 
-    mlir::ModuleOp wrapperModule = createModuleFromOperation(context, op);
+    ModuleOp wrapperModule = createModuleFromOperation(context, op);
 
     auto executable = prepareExecutable(wrapperModule, op);
 
@@ -73,6 +107,8 @@ public:
       if (i == warmup) t1 = std::chrono::high_resolution_clock::now();
       XLAExecute(executable, 0, nullptr, nullptr, numResults, res, &futures, nullptr);
     }
+
+    assert(!futures);
 
     auto t2 = std::chrono::high_resolution_clock::now();
 
@@ -88,10 +124,13 @@ public:
 
     wrapperModule.erase();
 
+    runtimeCache.try_emplace(op, duration);
     return duration;
   }
 
 private:
+  static llvm::DenseMap<Operation*, uint64_t, OperationMapInfo> runtimeCache;
+
   inline static bool logsInitialized;
 
   /**
@@ -104,19 +143,19 @@ private:
    * 
    * TODO: Surely there's a simpler way to do this?
   */
-  static mlir::Operation *cloneOpInContext(mlir::OpBuilder &builder,
-                                           mlir::Operation *op,
-                                           mlir::IRMapping& mapping) {
-    mlir::Location location = builder.getUnknownLoc();
+  static Operation *cloneOpInContext(OpBuilder &builder,
+                                           Operation *op,
+                                           IRMapping& mapping) {
+    Location location = builder.getUnknownLoc();
 
     // Recursively clone regions
-    llvm::SmallVector<std::unique_ptr<mlir::Region>> regions;
+    llvm::SmallVector<std::unique_ptr<Region>> regions;
 
     for (auto& region : op->getRegions()) {
-      auto newRegion = std::make_unique<mlir::Region>();
+      auto newRegion = std::make_unique<Region>();
 
       for (auto& block : region.getBlocks()) {
-        auto newBlock = new mlir::Block();
+        auto newBlock = new Block();
 
         // Map from old block arguments to new ones
         for (auto& arg : block.getArguments()) {
@@ -137,7 +176,7 @@ private:
       regions.push_back(std::move(newRegion));
     }
 
-    mlir::OperationState opState(location, 
+    OperationState opState(location, 
                                  op->getName().getStringRef().str(),   // Use string to make a new name, rather than reusing the OperationName
                                  op->getOperands(),
                                  op->getResultTypes(),
@@ -154,8 +193,8 @@ private:
     return newOp;
   }
 
-  static mlir::Operation *cloneOpInContext(mlir::OpBuilder &builder, mlir::Operation *op) {
-    mlir::IRMapping mapping;
+  static Operation *cloneOpInContext(OpBuilder &builder, Operation *op) {
+    IRMapping mapping;
     return cloneOpInContext(builder, op, mapping);
   }
 
@@ -163,34 +202,34 @@ private:
    * Wrap operation into a module, with dummy (constant zero) inputs as
    * its operands. Doesn't mutate op (instead it creates a copy).
    */
-  static mlir::ModuleOp createModuleFromOperation(mlir::MLIRContext &context, mlir::Operation *op) {
+  static ModuleOp createModuleFromOperation(MLIRContext &context, Operation *op) {
     // Wrap operation into a module with dummy inputs
-    mlir::OpBuilder builder(&context);
-    mlir::Location location = builder.getUnknownLoc();
-    mlir::ModuleOp wrapperModule = mlir::ModuleOp::create(location);
+    OpBuilder builder(&context);
+    Location location = builder.getUnknownLoc();
+    ModuleOp wrapperModule = ModuleOp::create(location);
 
     auto block = wrapperModule.getBodyRegion().begin();
 
     auto *newOp = cloneOpInContext(builder, op);
 
     // Create a func.func to wrap newOp around
-    mlir::FunctionType funcType = mlir::FunctionType::get(&context, {}, op->getResultTypes());
-    mlir::func::FuncOp funcOp = builder.create<mlir::func::FuncOp>(location, "main", funcType);
+    FunctionType funcType = FunctionType::get(&context, {}, op->getResultTypes());
+    func::FuncOp funcOp = builder.create<func::FuncOp>(location, "main", funcType);
     block->push_back(funcOp);
 
-    mlir::Block *entryBlock = funcOp.addEntryBlock();
+    Block *entryBlock = funcOp.addEntryBlock();
 
-    llvm::SmallVector<mlir::Value> dummyInputs;
+    llvm::SmallVector<Value> dummyInputs;
     auto operandTypes = op->getOperandTypes();
 
     for (auto type : operandTypes) {
       // Zero-initialise inputs with same operand shape
-      mlir::Attribute zeroAttr = builder.getZeroAttr(type);
-      mlir::OperationState zeroState(location, "stablehlo.constant");
+      Attribute zeroAttr = builder.getZeroAttr(type);
+      OperationState zeroState(location, "stablehlo.constant");
       zeroState.addTypes(type);
       zeroState.addAttribute("value", zeroAttr);
 
-      mlir::Operation *zeroOp = builder.create(zeroState);
+      Operation *zeroOp = builder.create(zeroState);
       dummyInputs.push_back(zeroOp->getResult(0));
     }
 
@@ -201,7 +240,7 @@ private:
 
     entryBlock->push_back(newOp);
     
-    auto returnOp = builder.create<mlir::func::ReturnOp>(location, newOp->getResults());
+    auto returnOp = builder.create<func::ReturnOp>(location, newOp->getResults());
     entryBlock->push_back(returnOp);
 
     return std::move(wrapperModule);
@@ -210,8 +249,8 @@ private:
   /**
    * Wrap and compile operation into a PjRtLoadedExecutable, to be passed into XLAExecute.
   */
-  static xla::PjRtLoadedExecutable* prepareExecutable(mlir::ModuleOp &wrapperModule, mlir::Operation *op) {
-    if (mlir::failed(mlir::verify(wrapperModule))) {
+  static xla::PjRtLoadedExecutable* prepareExecutable(ModuleOp &wrapperModule, Operation *op) {
+    if (failed(verify(wrapperModule))) {
       llvm::errs() << "Module verification error\n";
     }
 
@@ -224,15 +263,17 @@ private:
   }
 };
 
+llvm::DenseMap<Operation*, uint64_t, OperationMapInfo> OperationTimer::runtimeCache;
+
 namespace {
-class EqualitySaturationPass : public mlir::PassWrapper<EqualitySaturationPass, mlir::OperationPass<mlir::ModuleOp>> {
-  mlir::StringRef getArgument() const override { return "equality-saturation-pass"; }
-  mlir::StringRef getDescription() const override { return "Optimizes HLO graph using a Rust-based optimizer"; }
+class EqualitySaturationPass : public PassWrapper<EqualitySaturationPass, OperationPass<ModuleOp>> {
+  StringRef getArgument() const override { return "equality-saturation-pass"; }
+  StringRef getDescription() const override { return "Optimizes HLO graph using a Rust-based optimizer"; }
 
   void runOnOperation() override {    
-    mlir::ModuleOp modOp = getOperation();
+    ModuleOp modOp = getOperation();
 
-    modOp.walk([](mlir::Operation *op) {
+    modOp.walk([](Operation *op) {
       llvm::outs() << "Operation name: " << op->getName() << "\n";
 
       auto cost = OperationTimer::getCost(op, 100, 100);
