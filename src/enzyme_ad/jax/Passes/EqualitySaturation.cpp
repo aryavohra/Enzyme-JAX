@@ -24,57 +24,87 @@ public:
   int measureCost(Operation *op) {
     return 0;
   }
-    
-  Box<TensorInfo> dfs(
+
+  std::vector<int32_t> castArrayRefToInt32(llvm::ArrayRef<int64_t> shape) {
+    std::vector<int32_t> dims;
+    dims.reserve(shape.size());
+    for (int64_t dim : shape) {
+      dims.push_back(static_cast<int32_t>(dim));
+    }
+    return dims;
+  }
+    // we might want to just store pointers to TensorInfos instead of boxes.
+  TensorInfo* dfs(
       Operation *op,
-      std::unordered_map<Operation*, Box<TensorInfo>> *opToTensorInfo,
+      std::unordered_map<Operation*, TensorInfo*> *opToTensorInfo,
       Box<CppGraphConverter> &graph
       ) {
     if (opToTensorInfo->find(op) != opToTensorInfo->end()) {
-        return std::move(opToTensorInfo->at(op));
+        return opToTensorInfo->at(op);
     }
-
-    Box<TensorInfo> tensorInfo = Box<TensorInfo>::from_raw(nullptr);
-    string opName = op->getName().getStringRef().str();
-
-    if (opName == "func.func") {
-    }
-    else if (isa<stablehlo::ConstantOp>(op)) {
-        auto constantOp = cast<stablehlo::ConstantOp>(op);
-        tensorInfo = graph->new_constant_op(0, measureCost(op));
+    TensorInfo* tensorInfo = nullptr;
+    if (isa<stablehlo::ConstantOp>(op)) {
+	tensorInfo = graph->new_constant_op(measureCost(op)).into_raw();
     }
     else if (isa<stablehlo::MulOp>(op)) {
-        auto mulOp = cast<stablehlo::MulOp>(op);
-        auto lhs = mulOp.getLhs().getDefiningOp();
-        auto rhs = mulOp.getRhs().getDefiningOp();
-        tensorInfo = graph->new_mul_op(*dfs(lhs, opToTensorInfo, graph), *dfs(rhs, opToTensorInfo, graph), measureCost(op));
-    }
+	auto mulOp = dyn_cast<stablehlo::MulOp>(op);
+	auto lhs = mulOp.getLhs();
+	auto rhs = mulOp.getRhs();
+	TensorInfo* lhsTensorInfo = nullptr;
+	TensorInfo* rhsTensorInfo = nullptr;
 
-    if (tensorInfo.into_raw() != nullptr) {
-        opToTensorInfo->insert({op, std::move(tensorInfo)});
-        return std::move(opToTensorInfo->at(op));
+	if (lhs.getDefiningOp() == nullptr) {
+	  // you are a blockargument
+	  // if you are a tensortype, get shape
+	  if (isa<TensorType>(lhs.getType())) {
+	    auto shape = lhs.getType().getShape();
+            auto dims = castArrayRefToInt32(shape);
+            auto input_slice = rust::Slice<const int32_t>{dims.data(), static_cast<size_t>(dims.size())};
+	    lhsTensorInfo = graph->new_input(input_slice).into_raw();
+          } else {
+	    lhs.getType().dump();
+	  }
+	} else {
+	  lhsTensorInfo = dfs(lhs.getDefiningOp(), opToTensorInfo, graph);
+	}
+	if (rhs.getDefiningOp() == nullptr) {
+	  // you are a blockargument
+          // not handling booleans and complex numbers
+	  if (isa<TensorType>(rhs.getType())) {
+	    auto shape = rhs.getType().getShape();
+            auto dims = castArrayRefToInt32(shape);
+            auto input_slice = rust::Slice<const int32_t>{dims.data(), static_cast<size_t>(dims.size())};
+            rhsTensorInfo = graph->new_input(input_slice).into_raw();
+	  } else {
+	    rhs.getType().dump();
+	  }
+	} else {
+	  rhsTensorInfo = dfs(rhs.getDefiningOp(), opToTensorInfo, graph);
+	}
+	tensorInfo = graph->new_mul_op(*lhsTensorInfo, *rhsTensorInfo, measureCost(op)).into_raw();
     }
+    if (tensorInfo != nullptr) {
+	opToTensorInfo->insert({op, tensorInfo});
+	return tensorInfo;
+    }
+    return tensorInfo;
+ //    else {
+	// std::cout << "default!" << "\n"; 
+ //    }
   }
   
-  void dfsTraverse(Operation *op, std::unordered_map<Operation*, Box<TensorInfo>> *opToTensorInfo, Box<CppGraphConverter> &graph, std::unordered_map<int, Operation*> *unsupportedOpsInGraph) {
-    for (Region &region : op->getRegions()) {
-      for (Block &block : region.getBlocks()) {
-        for (Operation &nestedOp : block.getOperations()) {
-          dfs(&nestedOp, opToTensorInfo, graph);
-          dfsTraverse(&nestedOp, opToTensorInfo, graph, unsupportedOpsInGraph);
-        }
-      }
-    }
-  }
-
   Box<CppGraphConverter> create_egraph(std::unordered_map<int, Operation*> *unsupportedOpsInGraph, ModuleOp module) {
     auto graph = new_converter();
-    std::unordered_map<Operation*, Box<TensorInfo>> opToTensorInfo;
+    std::unordered_map<Operation*, TensorInfo*> opToTensorInfo;
 
-    for (auto &op : module.getOps()) {
-      dfs(&op, &opToTensorInfo, graph);
-      dfsTraverse(&op, &opToTensorInfo, graph, unsupportedOpsInGraph);
-    }
+    // for (auto &op : module.getOps()) {
+    //   dfs(&op, &opToTensorInfo, graph);
+    // }
+    module.walk([&](mlir::Operation *op) {
+      std::cout << "ENTERING AT: " << op->getName().getStringRef().str() << "\n";
+      dfs(op, &opToTensorInfo, graph);
+    });
+    graph->print_rec_expr();
 
     return graph;
   }
