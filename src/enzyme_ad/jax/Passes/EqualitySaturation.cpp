@@ -107,6 +107,9 @@ class EqualitySaturationPass
     if (isa<stablehlo::ConstantOp>(op)) {
       tensorInfo = graph->new_constant_op(measureCost(op)).into_raw();
     } else {
+      auto handleOperandPartial = [&](Value operand) {
+        return handleOperand(operand, opToTensorInfo, blockArgToTensorInfo, graph); 
+      };
       auto handleOperationPartial = [&](auto&& createOpFunc, auto&&... operands) {
         return handleOperation(op, createOpFunc, opToTensorInfo, blockArgToTensorInfo, graph, std::forward<decltype(operands)>(operands)...);
       }; 
@@ -138,6 +141,16 @@ class EqualitySaturationPass
       } else if (isa<stablehlo::ExpOp>(op)) {
         auto unaryOp = cast<stablehlo::ExpOp>(op);
         tensorInfo = handleOperationPartial(&CppGraphConverter::new_exp_op, unaryOp.getOperand());
+      } else if (isa<stablehlo::TransposeOp>(op)) {
+        auto binaryOp = cast<stablehlo::TransposeOp>(op);
+        std::vector<int32_t> permutation = castArrayRefToInt32(binaryOp.getPermutation());
+        auto permutation_slice = rust::Slice<const int32_t>{
+              permutation.data(), static_cast<size_t>(permutation.size())};
+        tensorInfo = graph->new_transpose_op(
+          *handleOperandPartial(binaryOp.getOperand()),
+          permutation_slice,
+          measureCost(op)
+        ).into_raw();
       }
     }
 
