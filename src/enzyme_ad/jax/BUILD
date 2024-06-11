@@ -1,6 +1,8 @@
 load("@jax//jaxlib:symlink_files.bzl", "symlink_inputs")
 load("@pybind11_bazel//:build_defs.bzl", "pybind_extension", "pybind_library")
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library")
+load("@tensat_crate_index//:defs.bzl", "all_crate_deps")
 
 exports_files(["enzymexlamlir-opt.cpp"])
 
@@ -441,4 +443,35 @@ pybind_extension(
         "@xla//xla/stream_executor:stream_executor_impl",
     ],
     linkstatic = 1
+)
+
+load("@tensat_crate_index//:defs.bzl", "aliases", "all_crate_deps")
+
+rust_library(
+    name = "tensat_lib",
+    crate_name = "tensat",
+    aliases = aliases(),
+    srcs = glob(["deps/tensat/src/*.rs"]),
+    compile_data = ["deps/tensat/src/equation.pest"],
+    deps = all_crate_deps(
+        normal = True,
+    ),
+    proc_macro_deps = all_crate_deps(
+        proc_macro = True,
+    ),
+    edition = "2021",
+)
+
+rust_binary(
+    name = "tensat",
+    # aliases = aliases(),
+    srcs = glob(["deps/tensat/src/*.rs"]),
+    visibility = ["//visibility:public"],
+    deps = all_crate_deps(
+        normal = True,
+    ) + [":tensat_lib"],
+    proc_macro_deps = all_crate_deps(
+        proc_macro = True,
+    ),
+    edition = "2021",
 )

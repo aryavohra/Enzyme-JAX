@@ -68,6 +68,31 @@ http_archive(
     url = "https://github.com/protocolbuffers/upb/archive/9effcbcb27f0a665f9f345030188c0b291e32482.tar.gz"
 )
 
+load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+http_archive(
+    name = "rules_rust",
+    integrity = "sha256-JLN47ZcAbx9wEr5Jiib4HduZATGLiDgK7oUi/fvotzU=",
+    urls = ["https://github.com/bazelbuild/rules_rust/releases/download/0.42.1/rules_rust-v0.42.1.tar.gz"],
+)
+
+load("@rules_rust//rust:repositories.bzl", "rules_rust_dependencies", "rust_register_toolchains")
+rules_rust_dependencies()
+rust_register_toolchains()
+
+load("@rules_rust//crate_universe:repositories.bzl", "crate_universe_dependencies")
+crate_universe_dependencies()
+
+load("@rules_rust//crate_universe:defs.bzl", "crates_repository", "crate")
+crates_repository(
+    name = "tensat_crate_index",
+    cargo_lockfile = "//src/enzyme_ad/jax:deps/tensat/Cargo.Bazel.lock",
+    lockfile = "//src/enzyme_ad/jax:deps/tensat/cargo-bazel-lock.json",
+    manifests = ["//src/enzyme_ad/jax:deps/tensat/Cargo.toml"],
+)
+
+load("@tensat_crate_index//:defs.bzl", "crate_repositories")
+crate_repositories()
+
 load("@xla//third_party/llvm:workspace.bzl", llvm = "repo")
 llvm("llvm-raw")
 load("@llvm-raw//utils/bazel:configure.bzl", "llvm_configure")
