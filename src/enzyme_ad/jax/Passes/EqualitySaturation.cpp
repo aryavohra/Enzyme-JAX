@@ -1,3 +1,5 @@
+#include "src/enzyme_ad/jax/Passes/EqualitySaturationPass.h"
+
 #include "mlir-c/IR.h"
 #include "mlir-c/Support.h"
 
@@ -177,12 +179,12 @@ private:
     }
 
     OperationState opState(location, 
-                                 op->getName().getStringRef().str(),   // Use string to make a new name, rather than reusing the OperationName
-                                 op->getOperands(),
-                                 op->getResultTypes(),
-                                 op->getAttrs(),
-                                 {},
-                                 regions);
+                            op->getName().getStringRef().str(),   // Use string to make a new name, rather than reusing the OperationName
+                            op->getOperands(),
+                            op->getResultTypes(),
+                            op->getAttrs(),
+                            {},
+                            regions);
 
     auto *newOp = builder.create(opState);
     
@@ -265,22 +267,35 @@ private:
 
 llvm::DenseMap<Operation*, uint64_t, OperationMapInfo> OperationTimer::runtimeCache;
 
+Operation* OperationCreator::createAddOp(Operation *lhs, Operation *rhs) {
+  auto loc = opBuilder.getUnknownLoc();
+  return opBuilder.create<stablehlo::AddOp>(loc, lhs->getResult(0), rhs->getResult(0));
+}
+
 namespace {
-class EqualitySaturationPass : public PassWrapper<EqualitySaturationPass, OperationPass<ModuleOp>> {
-  StringRef getArgument() const override { return "equality-saturation-pass"; }
-  StringRef getDescription() const override { return "Optimizes HLO graph using a Rust-based optimizer"; }
+  class EqualitySaturationPass
+      : public PassWrapper<EqualitySaturationPass, OperationPass<ModuleOp>> {
+    StringRef getArgument() const override {
+      return "equality-saturation-pass";
+    }
+    StringRef getDescription() const override {
+      return "Optimizes HLO graph using a Rust-based optimizer";
+    }
 
-  void runOnOperation() override {    
-    ModuleOp modOp = getOperation();
+    void runOnOperation() override {
+      ModuleOp modOp = getOperation();
 
-    modOp.walk([](Operation *op) {
-      llvm::outs() << "Operation name: " << op->getName() << "\n";
+      modOp.walk([](Operation *op) {
+        llvm::outs() << "Operation name: " << op->getName() << "\n";
 
-      auto cost = OperationTimer::getCost(op, 100, 100);
-      llvm::outs() << "Cost: " << cost << "\n\n";
-    });
-  }
-};
+        auto cost = OperationTimer::getCost(op, 100, 100);
+        llvm::outs() << "Cost: " << cost << "\n\n";
+      });
+
+      modOp.dump();
+      llvm::outs() << "\n";
+    }
+  };
 } // end anonymous namespace
 
 namespace mlir {
