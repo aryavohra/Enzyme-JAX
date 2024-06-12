@@ -68,15 +68,19 @@ http_archive(
     url = "https://github.com/protocolbuffers/upb/archive/9effcbcb27f0a665f9f345030188c0b291e32482.tar.gz"
 )
 
+load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
 http_archive(
-    name = "cxx.rs",
-    sha256 = "fd3eb6ea6048648c6b5cd697d9e3074d284384cd98298c4ec7ef9a06fe17c50f",
-    strip_prefix = "cxx-1.0.123",
-    url = "https://github.com/dtolnay/cxx/archive/refs/tags/1.0.123.tar.gz"
+    name = "bazel_skylib",
+    sha256 = "bc283cdfcd526a52c3201279cda4bc298652efa898b10b4db0837dc51652756f",
+    urls = [
+        "https://mirror.bazel.build/github.com/bazelbuild/bazel-skylib/releases/download/1.7.1/bazel-skylib-1.7.1.tar.gz",
+        "https://github.com/bazelbuild/bazel-skylib/releases/download/1.7.1/bazel-skylib-1.7.1.tar.gz",
+    ],
 )
 
-load("@cxx.rs//tools/bazel:extension.bzl", "crate_repositories")
-crate_repositories()
+load("@bazel_skylib//:workspace.bzl", "bazel_skylib_workspace")
+bazel_skylib_workspace()
 
 http_archive(
     name = "rules_rust",
@@ -92,6 +96,7 @@ load("@rules_rust//crate_universe:repositories.bzl", "crate_universe_dependencie
 crate_universe_dependencies()
 
 load("@rules_rust//crate_universe:defs.bzl", "crates_repository", "crate")
+
 crates_repository(
     name = "tensat_crate_index",
     cargo_lockfile = "//src/enzyme_ad/jax:deps/tensat/Cargo.Bazel.lock",
@@ -99,8 +104,8 @@ crates_repository(
     manifests = ["//src/enzyme_ad/jax:deps/tensat/Cargo.toml"],
 )
 
-load("@tensat_crate_index//:defs.bzl", "crate_repositories")
-crate_repositories()
+load("@tensat_crate_index//:defs.bzl", tensat_crate_repositories = "crate_repositories")
+tensat_crate_repositories()
 
 load("@xla//third_party/llvm:workspace.bzl", llvm = "repo")
 llvm("llvm-raw")
