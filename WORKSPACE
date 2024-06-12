@@ -68,7 +68,16 @@ http_archive(
     url = "https://github.com/protocolbuffers/upb/archive/9effcbcb27f0a665f9f345030188c0b291e32482.tar.gz"
 )
 
-load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+http_archive(
+    name = "cxx.rs",
+    sha256 = "fd3eb6ea6048648c6b5cd697d9e3074d284384cd98298c4ec7ef9a06fe17c50f",
+    strip_prefix = "cxx-1.0.123",
+    url = "https://github.com/dtolnay/cxx/archive/refs/tags/1.0.123.tar.gz"
+)
+
+load("@cxx.rs//tools/bazel:extension.bzl", "crate_repositories")
+crate_repositories()
+
 http_archive(
     name = "rules_rust",
     integrity = "sha256-JLN47ZcAbx9wEr5Jiib4HduZATGLiDgK7oUi/fvotzU=",

@@ -3,6 +3,7 @@ load("@pybind11_bazel//:build_defs.bzl", "pybind_extension", "pybind_library")
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library")
 load("@tensat_crate_index//:defs.bzl", "all_crate_deps")
+load("@cxx.rs//tools/bazel:rust_cxx_bridge.bzl", "rust_cxx_bridge")
 
 exports_files(["enzymexlamlir-opt.cpp"])
 
@@ -450,7 +451,6 @@ load("@tensat_crate_index//:defs.bzl", "aliases", "all_crate_deps")
 rust_library(
     name = "tensat_lib",
     crate_name = "tensat",
-    aliases = aliases(),
     srcs = glob(["deps/tensat/src/*.rs"]),
     compile_data = ["deps/tensat/src/equation.pest"],
     deps = all_crate_deps(
@@ -464,7 +464,6 @@ rust_library(
 
 rust_binary(
     name = "tensat",
-    # aliases = aliases(),
     srcs = glob(["deps/tensat/src/*.rs"]),
     visibility = ["//visibility:public"],
     deps = all_crate_deps(
@@ -475,3 +474,22 @@ rust_binary(
     ),
     edition = "2021",
 )
+
+rust_cxx_bridge(
+    name = "bridge",
+    src = "deps/tensat/src/input.rs",
+    deps = [
+        "@cxx.rs//:core",
+        ":tensat_lib",
+    ],
+)
+
+cc_binary(
+    name = "graphtest",
+    visibility = ["//visibility:public"],
+    srcs = ["deps/tensat/src/graph.cc"],
+    deps = [
+        "@cxx.rs//:core",
+        ":bridge/include"
+    ]
+)   
