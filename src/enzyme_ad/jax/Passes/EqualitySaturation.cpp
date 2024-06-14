@@ -286,7 +286,12 @@ uint64_t tensat::CostModel::getAddOpCost(rust::Slice<const int64_t> lhsDims,
                                               tensat::Type lhsType,
                                               rust::Slice<const int64_t> rhsDims,
                                               tensat::Type rhsType) const {
-  MLIRContext context;
+  DialectRegistry registry;
+  InitializeRegistryAndPasses(wrap(&registry));
+
+  MLIRContext context(registry);
+  RegisterDialects(wrap(&context));
+
   OpBuilder builder(&context);
 
   auto lhs = OperationTimer::getDummyOp(builder, newTensorType(builder, lhsDims, lhsType));
@@ -332,6 +337,8 @@ namespace {
     }
 
     void runOnOperation() override {
+      tensat::test_cost_model();
+
       ModuleOp modOp = getOperation();
 
       modOp.walk([](Operation *op) {

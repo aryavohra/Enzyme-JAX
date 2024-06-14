@@ -120,6 +120,7 @@ cc_library(
         ":TransformOpsIncGen",
         ":TransformOpsImplIncGen",
         ":XLADerivatives",
+        ":tensat_lib",
     ],
 )
 
@@ -328,6 +329,7 @@ pybind_library(
     ]),
     deps = [
         ":XLADerivatives",
+        "tensat_lib",
         ":TransformOps",
         # This is similar to xla_binary rule and is needed to make XLA client compile.
         "@tsl//tsl/framework:allocator",
