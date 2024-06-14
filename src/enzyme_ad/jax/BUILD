@@ -466,11 +466,11 @@ rust_library(
 
 rust_binary(
     name = "tensat",
-    srcs = glob(["deps/tensat/src/*.rs"]),
+    srcs = glob(["deps/tensat/src/main.rs"]),
     visibility = ["//visibility:public"],
     deps = all_crate_deps(
         normal = True,
-    ) + [":tensat_lib", ":XLADerivatives"],
+    ) + [":tensat_lib"],
     proc_macro_deps = all_crate_deps(
         proc_macro = True,
     ),
@@ -481,7 +481,6 @@ cc_library(
     name = "equality_saturation",
     hdrs = ["Passes/EqualitySaturation.h"],
     deps = [
-        "tensat_bridge/include",
         ":cxx_core",
         "@llvm-project//mlir:IR",
     ],
@@ -494,7 +493,6 @@ rust_cxx_bridge(
     deps = [
         ":cxx_core",
         ":equality_saturation",
-        ":XLADerivatives",
     ],
 )
 
