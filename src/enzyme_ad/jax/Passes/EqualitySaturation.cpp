@@ -1,5 +1,3 @@
-#include "src/enzyme_ad/jax/Passes/EqualitySaturationPass.h"
-
 #include "mlir-c/IR.h"
 #include "mlir-c/Support.h"
 
@@ -8,10 +6,12 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/OperationSupport.h"
+#include "mlir/IR/Types.h"
 #include "mlir/IR/Value.h"
 #include "mlir/IR/Verifier.h"
 #include "mlir/Pass/Pass.h"
@@ -29,10 +29,14 @@
 
 #include "xla/python/pjrt_ifrt/xla_compiler.h"
 
+#include "cxxbridge/deps/tensat/src/input.rs.h"
+#include "rust/cxx.h"
+
 #include <fstream>
 #include <iostream>
 #include <string>
 #include <chrono>
+#include <memory>
 
 #define DEBUG_TYPE "enzyme"
 
@@ -71,6 +75,8 @@ class OperationTimer {
 public:
   /**
    * Measure cost of operation (execution time in microseconds) by running it many times and measuring the time taken.
+   * TODO: Make cloning optional
+   * TODO: Preserve context across runs so that we're not creating unnecessary contexts
   */
   static uint64_t getCost(Operation* op, unsigned warmup, unsigned repetitions) {
     if (!logsInitialized) {
@@ -128,6 +134,17 @@ public:
 
     runtimeCache.try_emplace(op, duration);
     return duration;
+  }
+
+  // TODO: Look into using input ops, to avoid constant folding etc
+  static Operation *getDummyOp(OpBuilder &builder, Type type) {
+    // Zero-initialise inputs with same operand shape
+    Attribute zeroAttr = builder.getZeroAttr(type);
+    OperationState zeroState(builder.getUnknownLoc(), "stablehlo.constant");
+    zeroState.addTypes(type);
+    zeroState.addAttribute("value", zeroAttr);
+
+    return builder.create(zeroState);
   }
 
 private:
@@ -225,13 +242,7 @@ private:
     auto operandTypes = op->getOperandTypes();
 
     for (auto type : operandTypes) {
-      // Zero-initialise inputs with same operand shape
-      Attribute zeroAttr = builder.getZeroAttr(type);
-      OperationState zeroState(location, "stablehlo.constant");
-      zeroState.addTypes(type);
-      zeroState.addAttribute("value", zeroAttr);
-
-      Operation *zeroOp = builder.create(zeroState);
+      Operation *zeroOp = getDummyOp(builder, type);
       dummyInputs.push_back(zeroOp->getResult(0));
     }
 
@@ -267,9 +278,47 @@ private:
 
 llvm::DenseMap<Operation*, uint64_t, OperationMapInfo> OperationTimer::runtimeCache;
 
-Operation* OperationCreator::createAddOp(Operation *lhs, Operation *rhs) {
-  auto loc = opBuilder.getUnknownLoc();
-  return opBuilder.create<stablehlo::AddOp>(loc, lhs->getResult(0), rhs->getResult(0));
+// TODO: Avoid creating new MLIRContexts
+// TODO: Avoid creating dummy inputs (we need them again for cost measurement, so duplicated)
+// TODO: Lump binary ops together
+
+uint64_t tensat::CostModel::getAddOpCost(rust::Slice<const int64_t> lhsDims,
+                                              tensat::Type lhsType,
+                                              rust::Slice<const int64_t> rhsDims,
+                                              tensat::Type rhsType) const {
+  MLIRContext context;
+  OpBuilder builder(&context);
+
+  auto lhs = OperationTimer::getDummyOp(builder, newTensorType(builder, lhsDims, lhsType));
+  auto rhs = OperationTimer::getDummyOp(builder, newTensorType(builder, rhsDims, rhsType));
+
+  auto addOp = builder.create<stablehlo::AddOp>(builder.getUnknownLoc(), lhs->getResult(0), rhs->getResult(0));
+  auto cost = OperationTimer::getCost(addOp, 100, 100);
+
+  addOp.erase();
+
+  return cost;  
+}
+
+mlir::Type tensat::CostModel::newTensorType(OpBuilder& builder, rust::Slice<const int64_t> dims, tensat::Type type) const {
+  auto dimsRef = llvm::ArrayRef(dims.data(), dims.size());
+  auto mlirType = tensatTypeToMlirType(builder, type);
+  return RankedTensorType::get(dimsRef, mlirType);
+}
+
+mlir::Type tensat::CostModel::tensatTypeToMlirType(OpBuilder& builder, tensat::Type type) const {
+  switch (type) {
+    case tensat::Type::i32:
+      return builder.getI32Type();
+    case tensat::Type::f32:
+      return builder.getF32Type();
+    default:
+      return nullptr; // TODO: Probably not the best practice?
+  }
+}
+
+std::unique_ptr<tensat::CostModel> tensat::newCostModel() {
+  return std::make_unique<tensat::CostModel>();
 }
 
 namespace {

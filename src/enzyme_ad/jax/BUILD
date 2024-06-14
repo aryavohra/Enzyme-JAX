@@ -234,6 +234,8 @@ cc_library(
         ":EnzyeHLOPatternsIncGen",
         ":mhlo-derivatives",
         ":stablehlo-derivatives",
+        ":tensat_bridge/include",
+        ":equality_saturation",
         "@enzyme//:EnzymeMLIR",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:AffineDialect",
@@ -451,10 +453,11 @@ load("@tensat_crate_index//:defs.bzl", "aliases", "all_crate_deps")
 rust_library(
     name = "tensat_lib",
     crate_name = "tensat",
+    visibility = ["//visibility:public"],
     srcs = glob(["deps/tensat/src/*.rs"]),
     deps = all_crate_deps(
         normal = True,
-    ),
+    ) + [":tensat_bridge", ":XLADerivatives"],
     proc_macro_deps = all_crate_deps(
         proc_macro = True,
     ),
@@ -467,11 +470,22 @@ rust_binary(
     visibility = ["//visibility:public"],
     deps = all_crate_deps(
         normal = True,
-    ) + [":tensat_lib"],
+    ) + [":tensat_lib", ":XLADerivatives"],
     proc_macro_deps = all_crate_deps(
         proc_macro = True,
     ),
     edition = "2021",
+)
+
+cc_library(
+    name = "equality_saturation",
+    hdrs = ["Passes/EqualitySaturation.h"],
+    deps = [
+        "tensat_bridge/include",
+        ":cxx_core",
+        "@llvm-project//mlir:IR",
+    ],
+    strip_include_prefix = "Passes",
 )
 
 rust_cxx_bridge(
@@ -479,6 +493,8 @@ rust_cxx_bridge(
     src = "deps/tensat/src/input.rs",
     deps = [
         ":cxx_core",
+        ":equality_saturation",
+        ":XLADerivatives",
     ],
 )
 
