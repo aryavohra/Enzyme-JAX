@@ -305,6 +305,75 @@ uint64_t tensat::CostModel::getAddOpCost(rust::Slice<const int64_t> lhsDims,
   return cost;  
 }
 
+uint64_t tensat::CostModel::getSubtractOpCost(rust::Slice<const int64_t> lhsDims,
+                                              tensat::Type lhsType,
+                                              rust::Slice<const int64_t> rhsDims,
+                                              tensat::Type rhsType) const {
+  DialectRegistry registry;
+  InitializeRegistryAndPasses(wrap(&registry));
+
+  MLIRContext context(registry);
+  RegisterDialects(wrap(&context));
+
+  OpBuilder builder(&context);
+
+  auto lhs = OperationTimer::getDummyOp(builder, newTensorType(builder, lhsDims, lhsType));
+  auto rhs = OperationTimer::getDummyOp(builder, newTensorType(builder, rhsDims, rhsType));
+
+  auto subtractOp = builder.create<stablehlo::SubtractOp>(builder.getUnknownLoc(), lhs->getResult(0), rhs->getResult(0));
+  auto cost = OperationTimer::getCost(subtractOp, 100, 100);
+
+  subtractOp.erase();
+
+  return cost;  
+}
+
+uint64_t tensat::CostModel::getMulOpCost(rust::Slice<const int64_t> lhsDims,
+                                              tensat::Type lhsType,
+                                              rust::Slice<const int64_t> rhsDims,
+                                              tensat::Type rhsType) const {
+  DialectRegistry registry;
+  InitializeRegistryAndPasses(wrap(&registry));
+
+  MLIRContext context(registry);
+  RegisterDialects(wrap(&context));
+
+  OpBuilder builder(&context);
+
+  auto lhs = OperationTimer::getDummyOp(builder, newTensorType(builder, lhsDims, lhsType));
+  auto rhs = OperationTimer::getDummyOp(builder, newTensorType(builder, rhsDims, rhsType));
+
+  auto mulOp = builder.create<stablehlo::MulOp>(builder.getUnknownLoc(), lhs->getResult(0), rhs->getResult(0));
+  auto cost = OperationTimer::getCost(mulOp, 100, 100);
+
+  mulOp.erase();
+
+  return cost;  
+}
+
+uint64_t tensat::CostModel::getDivOpCost(rust::Slice<const int64_t> lhsDims,
+                                              tensat::Type lhsType,
+                                              rust::Slice<const int64_t> rhsDims,
+                                              tensat::Type rhsType) const {
+  DialectRegistry registry;
+  InitializeRegistryAndPasses(wrap(&registry));
+
+  MLIRContext context(registry);
+  RegisterDialects(wrap(&context));
+
+  OpBuilder builder(&context);
+
+  auto lhs = OperationTimer::getDummyOp(builder, newTensorType(builder, lhsDims, lhsType));
+  auto rhs = OperationTimer::getDummyOp(builder, newTensorType(builder, rhsDims, rhsType));
+
+  auto divOp = builder.create<stablehlo::DivOp>(builder.getUnknownLoc(), lhs->getResult(0), rhs->getResult(0));
+  auto cost = OperationTimer::getCost(divOp, 100, 100);
+
+  divOp.erase();
+
+  return cost;  
+}
+
 mlir::Type tensat::CostModel::newTensorType(OpBuilder& builder, rust::Slice<const int64_t> dims, tensat::Type type) const {
   auto dimsRef = llvm::ArrayRef(dims.data(), dims.size());
   auto mlirType = tensatTypeToMlirType(builder, type);
@@ -337,8 +406,6 @@ namespace {
     }
 
     void runOnOperation() override {
-      tensat::test_cost_model();
-
       ModuleOp modOp = getOperation();
 
       modOp.walk([](Operation *op) {
