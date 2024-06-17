@@ -405,8 +405,6 @@ namespace {
 	  return "Optimizes HLO graph using a Rust-based optimizer";
 	}
 
-	int measureCost(Operation *op) { return 0; }
-
 	std::vector<int32_t> castArrayRefToInt32(llvm::ArrayRef<int64_t> shape) {
 	  std::vector<int32_t> dims;
 	  dims.reserve(shape.size());
@@ -423,11 +421,11 @@ namespace {
 	  return input_slice;
 	}
 
-	TensorInfo* handleEnodeOperand(
+        tensat::TensorInfo* handleEnodeOperand(
 	    Value operand,
-	    std::unordered_map<Operation*, TensorInfo*> *opToTensorInfo,
-	    std::unordered_map<int, TensorInfo*> *blockArgToTensorInfo,
-	    Box<CppGraphConverter> &graph) {
+	    std::unordered_map<Operation*, tensat::TensorInfo*> *opToTensorInfo,
+	    std::unordered_map<int, tensat::TensorInfo*> *blockArgToTensorInfo,
+	    Box<tensat::CppGraphConverter> &graph) {
 	  if (auto defOp = operand.getDefiningOp()) {
 	    // Use existing TensorInfo if already processed
 	    return dfs(defOp, opToTensorInfo, blockArgToTensorInfo, graph);
@@ -459,12 +457,12 @@ namespace {
 	}
 
 	template <typename CreateOpFunc, typename... Args>
-	  TensorInfo* handleOperation(
+	  tensat::TensorInfo* handleOperation(
 	      Operation* op,
 	      CreateOpFunc createOpFunc,
-	      std::unordered_map<Operation*, TensorInfo*> *opToTensorInfo,
-	      std::unordered_map<int, TensorInfo*> *blockArgToTensorInfo,
-	      Box<CppGraphConverter> &graph,
+	      std::unordered_map<Operation*, tensat::TensorInfo*> *opToTensorInfo,
+	      std::unordered_map<int, tensat::TensorInfo*> *blockArgToTensorInfo,
+	      Box<tensat::CppGraphConverter> &graph,
 	      Args&&... args) {
 	    auto args_tuple = std::forward_as_tuple(std::forward<Args>(args)...);
 	    auto handleArgs = [&](auto&&... operands) {
@@ -476,22 +474,22 @@ namespace {
 
 	    // Use std::apply to unpack operandInfos into the function call
 	    return std::apply([&](auto&&... unpacked) {
-		return std::invoke(createOpFunc, *graph, *unpacked..., measureCost(op)).into_raw();
+		return std::invoke(createOpFunc, *graph, *unpacked...).into_raw();
 		}, operandInfos);
 	  }
 
 
-	TensorInfo *dfs(Operation* op,
-	    std::unordered_map<Operation*, TensorInfo*> *opToTensorInfo,
-	    std::unordered_map<int, TensorInfo*> *blockArgToTensorInfo,
-	    Box<CppGraphConverter> &graph) {
+        tensat::TensorInfo *dfs(Operation* op,
+	    std::unordered_map<Operation*, tensat::TensorInfo*> *opToTensorInfo,
+	    std::unordered_map<int, tensat::TensorInfo*> *blockArgToTensorInfo,
+	    Box<tensat::CppGraphConverter> &graph) {
 	  if (opToTensorInfo->find(op) != opToTensorInfo->end()) {
 	    return opToTensorInfo->at(op);
 	  }
-	  TensorInfo *tensorInfo = nullptr;
+          tensat::TensorInfo *tensorInfo = nullptr;
 
 	  if (isa<stablehlo::ConstantOp>(op)) {
-	    tensorInfo = graph->new_constant_op(measureCost(op)).into_raw();
+	    tensorInfo = graph->new_constant_op().into_raw();
 	  } else {
 	    auto handleEnodeOperandPartial = [&](Value operand) {
 	      return handleEnodeOperand(operand, opToTensorInfo, blockArgToTensorInfo, graph); 
@@ -502,31 +500,31 @@ namespace {
 
 	    if (isa<stablehlo::MulOp>(op)) {
 	      auto mul = cast<stablehlo::MulOp>(op);
-	      tensorInfo = handleOperationPartial(&CppGraphConverter::new_mul_op, mul.getLhs(), mul.getRhs());
+	      tensorInfo = handleOperationPartial(&tensat::CppGraphConverter::new_mul_op, mul.getLhs(), mul.getRhs());
 	    } else if (isa<stablehlo::SubtractOp>(op)) {
 	      auto subtract = cast<stablehlo::SubtractOp>(op);
-	      tensorInfo = handleOperationPartial(&CppGraphConverter::new_subtract_op, subtract.getLhs(), subtract.getRhs());
+	      tensorInfo = handleOperationPartial(&tensat::CppGraphConverter::new_subtract_op, subtract.getLhs(), subtract.getRhs());
 	    } else if (isa<stablehlo::DivOp>(op)) {
 	      auto div = cast<stablehlo::DivOp>(op);
-	      tensorInfo = handleOperationPartial(&CppGraphConverter::new_div_op, div.getLhs(), div.getRhs());
+	      tensorInfo = handleOperationPartial(&tensat::CppGraphConverter::new_div_op, div.getLhs(), div.getRhs());
 	    } else if (isa<stablehlo::AddOp>(op)) {
 	      auto add = cast<stablehlo::AddOp>(op);
-	      tensorInfo = handleOperationPartial(&CppGraphConverter::new_add_op, add.getLhs(), add.getRhs());
+	      tensorInfo = handleOperationPartial(&tensat::CppGraphConverter::new_add_op, add.getLhs(), add.getRhs());
 	    } else if (isa<stablehlo::MinOp>(op)) {
 	      auto min = cast<stablehlo::MinOp>(op);
-	      tensorInfo = handleOperationPartial(&CppGraphConverter::new_min_op, min.getLhs(), min.getRhs());
+	      tensorInfo = handleOperationPartial(&tensat::CppGraphConverter::new_min_op, min.getLhs(), min.getRhs());
 	    } else if (isa<stablehlo::MaxOp>(op)) {
 	      auto max = cast<stablehlo::MaxOp>(op);
-	      tensorInfo = handleOperationPartial(&CppGraphConverter::new_max_op, max.getLhs(), max.getRhs());
+	      tensorInfo = handleOperationPartial(&tensat::CppGraphConverter::new_max_op, max.getLhs(), max.getRhs());
 	    } else if (isa<stablehlo::TanhOp>(op)) {
 	      auto tanh = cast<stablehlo::TanhOp>(op);
-	      tensorInfo = handleOperationPartial(&CppGraphConverter::new_tanh_op, tanh.getOperand());
+	      tensorInfo = handleOperationPartial(&tensat::CppGraphConverter::new_tanh_op, tanh.getOperand());
 	    } else if (isa<stablehlo::NegOp>(op)) {
 	      auto neg = cast<stablehlo::NegOp>(op);
-	      tensorInfo = handleOperationPartial(&CppGraphConverter::new_neg_op, neg.getOperand());
+	      tensorInfo = handleOperationPartial(&tensat::CppGraphConverter::new_neg_op, neg.getOperand());
 	    } else if (isa<stablehlo::ExpOp>(op)) {
 	      auto exp = cast<stablehlo::ExpOp>(op);
-	      tensorInfo = handleOperationPartial(&CppGraphConverter::new_exp_op, exp.getOperand());
+	      tensorInfo = handleOperationPartial(&tensat::CppGraphConverter::new_exp_op, exp.getOperand());
 	    } else if (isa<stablehlo::TransposeOp>(op)) {
 	      auto transpose = cast<stablehlo::TransposeOp>(op);
 	      std::vector<int32_t> permutation = castArrayRefToInt32(transpose.getPermutation());
@@ -534,8 +532,7 @@ namespace {
 		permutation.data(), static_cast<size_t>(permutation.size())};
 	      tensorInfo = graph->new_transpose_op(
 		  *handleEnodeOperandPartial(transpose.getOperand()),
-		  permutation_slice,
-		  measureCost(op)
+		  permutation_slice
 		  ).into_raw();
 	    } else if (isa<stablehlo::ReshapeOp>(op)) {
 	      auto reshape = cast<stablehlo::ReshapeOp>(op);
@@ -545,8 +542,7 @@ namespace {
 		  shape.data(), static_cast<size_t>(shape.size())};
 		tensorInfo = graph->new_reshape_op(
 		    *handleEnodeOperandPartial(reshape.getOperand()),
-		    output_shape_slice,
-		    measureCost(op)
+		    output_shape_slice
 		    ).into_raw();
 	      } else {
 		std::cout
@@ -562,8 +558,7 @@ namespace {
 		  shape.data(), static_cast<size_t>(shape.size())};
 		tensorInfo = graph->new_iota_op(
 		    iota_dimension,
-		    output_shape_slice,
-		    measureCost(op)
+		    output_shape_slice
 		    ).into_raw();
 	      } else {
 		std::cout
@@ -606,8 +601,7 @@ namespace {
 		  rhs_batch_dim,
 		  lhs_contracting_dim,
 		  rhs_contracting_dim,
-		  precision_config_slice,
-		  measureCost(op)
+		  precision_config_slice
 		  ).into_raw();
 	    }
 	  }
@@ -619,12 +613,12 @@ namespace {
 	  return tensorInfo;
 	}
 
-	Box<CppGraphConverter> create_egraph(
+	Box<tensat::CppGraphConverter> create_egraph(
 	    std::unordered_map<int, Operation*> *unsupportedOpsInGraph,
 	    ModuleOp module) {
-	  auto graph = new_converter();
-	  std::unordered_map<Operation*, TensorInfo*> opToTensorInfo;
-	  std::unordered_map<int, TensorInfo*> blockArgToTensorInfo;
+	  auto graph = tensat::new_converter();
+	  std::unordered_map<Operation*, tensat::TensorInfo*> opToTensorInfo;
+	  std::unordered_map<int, tensat::TensorInfo*> blockArgToTensorInfo;
 	  module.walk([&](mlir::Operation *op) {
 	      std::cout << "ENTERING AT: " << op->getName().getStringRef().str()
 	      << "\n";
