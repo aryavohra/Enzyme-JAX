@@ -1,6 +1,9 @@
 load("@jax//jaxlib:symlink_files.bzl", "symlink_inputs")
 load("@pybind11_bazel//:build_defs.bzl", "pybind_extension", "pybind_library")
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library")
+load("@tensat_crate_index//:defs.bzl", "all_crate_deps")
+load("deps/rust_cxx_bridge.bzl", "rust_cxx_bridge")
 
 exports_files(["enzymexlamlir-opt.cpp"])
 
@@ -37,6 +40,7 @@ pybind_library(
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:TargetParser",
     ],
+    alwayslink = True
 )
 
 py_library(
@@ -116,6 +120,7 @@ cc_library(
         ":TransformOpsIncGen",
         ":TransformOpsImplIncGen",
         ":XLADerivatives",
+        ":tensat_lib",
     ],
 )
 
@@ -211,15 +216,13 @@ cc_library(
         [
             "Implementations/*.cpp",
             "Passes/*.cpp",
-	    "Passes/target/debug/libtensat.a",
-	    "Passes/target/cxxbridge/tensat/src/input.rs.cc",
-	    "Passes/target/cxxbridge/tensat/src/input.rs.h",
-	    "Passes/target/cxxbridge/rust/cxx.h"
-        ],
+            "deps/*.cpp",
+        ]
     ),
     hdrs = glob([
         "Implementations/*.h",
         "Passes/*.h",
+        "deps/include/*.h",
     ]),
     copts = [
         "-Werror=unused-variable",
@@ -228,31 +231,92 @@ cc_library(
         "-Werror=unused-result",
     ],
     deps = [
-	# "//src/enzyme_ad/jax/tensat:tensat_input_bridge",
         ":EnzymeXLAPassesIncGen",
         ":EnzyeHLOPatternsIncGen",
         ":mhlo-derivatives",
         ":stablehlo-derivatives",
+        ":tensat_bridge/include",
+        ":equality_saturation",
         "@enzyme//:EnzymeMLIR",
         "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:AffineDialect",
+        "@llvm-project//mlir:AllPassesAndDialects",
         "@llvm-project//mlir:ArithDialect",
+        "@llvm-project//mlir:AsyncDialect",
         "@llvm-project//mlir:CommonFolders",
+        "@llvm-project//mlir:ControlFlowDialect",
         "@llvm-project//mlir:ControlFlowInterfaces",
+        "@llvm-project//mlir:ConversionPasses",
+        "@llvm-project//mlir:Dialect",
+        "@llvm-project//mlir:DLTIDialect",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:FunctionInterfaces",
+        "@llvm-project//mlir:GPUDialect",
         "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:LinalgDialect",
         "@llvm-project//mlir:LLVMCommonConversion",
+        "@llvm-project//mlir:LLVMDialect",
+        "@llvm-project//mlir:MathDialect",
+        "@llvm-project//mlir:MemRefDialect",
+        "@llvm-project//mlir:MlirOptLib",
+        "@llvm-project//mlir:NVVMDialect",
+        "@llvm-project//mlir:OpenMPDialect",
         "@llvm-project//mlir:Pass",
+        "@llvm-project//mlir:SCFDialect",
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:TensorDialect",
+        "@llvm-project//mlir:TransformDialect",
+        "@llvm-project//mlir:TransformDialectInterfaces",
         "@llvm-project//mlir:Transforms",
         "@llvm-project//mlir:TransformUtils",
+
         "@stablehlo//:reference_ops",
         "@stablehlo//:stablehlo_ops",
         "@stablehlo//:stablehlo_passes",
         "@stablehlo//:stablehlo_type_inference",
         "@xla//xla/mlir_hlo",
-    ],
+        # "@xla//xla/pjrt:pjrt_client",
+        "@xla//xla/pjrt/cpu:cpu_client",
+        "@xla//xla/pjrt/gpu:se_gpu_pjrt_client",
+
+        "@xla//xla/service/cpu:cpu_compiler",
+        "@xla//xla/stream_executor/tpu:tpu_on_demand_compiler",
+        "@xla//xla/stream_executor/tpu:tpu_executor",
+        "@xla//xla/stream_executor/tpu:tpu_transfer_manager",
+        
+        "@xla//xla/service/cpu:cpu_transfer_manager",
+
+        "@xla//xla/pjrt:status_casters",
+        "@xla//xla/python/ifrt:ifrt",
+        "@xla//xla/python/pjrt_ifrt:xla_ifrt",
+        "@xla//xla/ffi:call_frame",
+        "@com_google_protobuf//:protobuf",
+        "@tsl//tsl/profiler/backends/cpu:annotation_stack_impl",
+        "@tsl//tsl/profiler/backends/cpu:traceme_recorder_impl",
+        "@tsl//tsl/profiler/utils:time_utils_impl",
+        "@tsl//tsl/framework:allocator_registry_impl",
+        "@tsl//tsl/platform:env_impl",
+        "@xla//xla/stream_executor:stream_executor_impl",
+        "@xla//xla/mlir/utils:type_util",
+        "@stablehlo//:stablehlo_capi_objects",
+        "@stablehlo//:chlo_capi_objects",
+        "@com_google_absl//absl/hash:hash",
+        "@com_google_absl//absl/log:initialize",
+        "@llvm-project//mlir:CAPIIRObjects",
+    ] + select({
+    "@bazel_tools//src/conditions:darwin": [],
+    "//conditions:default": [
+        "@xla//xla/stream_executor/cuda:all_runtime", 
+        "@xla//xla/stream_executor/rocm:all_runtime",
+        "@xla//xla/service/gpu/model:hlo_op_profiles",
+        "@xla//xla/service/gpu/model:hlo_op_profile_proto_cc_impl",
+        "@xla//xla/service/gpu:nvptx_compiler",
+        # "@xla//xla/service/gpu:amdgpu_compiler",
+        "@xla//xla/service/gpu:gpu_transfer_manager",
+        "@xla//xla/stream_executor:kernel", 
+    ]}),
+    alwayslink = 1,
+    linkstatic = 1
 )
 
 pybind_library(
@@ -265,6 +329,7 @@ pybind_library(
     ]),
     deps = [
         ":XLADerivatives",
+        "tensat_lib",
         ":TransformOps",
         # This is similar to xla_binary rule and is needed to make XLA client compile.
         "@tsl//tsl/framework:allocator",
@@ -348,6 +413,7 @@ pybind_library(
         # Mosaic
         "@jax//jaxlib/mosaic:tpu_dialect",
     ],
+    alwayslink = True
 )
 
 pybind_extension(
@@ -377,4 +443,75 @@ pybind_extension(
         "@xla//xla/service/cpu:cpu_executable",
         "@xla//xla/stream_executor:stream_executor_impl",
     ],
+    linkstatic = 1
 )
+
+load("@tensat_crate_index//:defs.bzl", "aliases", "all_crate_deps")
+
+rust_library(
+    name = "tensat_lib",
+    crate_name = "tensat",
+    visibility = ["//visibility:public"],
+    srcs = glob(["deps/tensat/src/*.rs"]),
+    deps = all_crate_deps(
+        normal = True,
+    ) + [":tensat_bridge", ":XLADerivatives"],
+    proc_macro_deps = all_crate_deps(
+        proc_macro = True,
+    ),
+    edition = "2021",
+)
+
+rust_binary(
+    name = "tensat",
+    srcs = glob(["deps/tensat/src/main.rs"]),
+    visibility = ["//visibility:public"],
+    deps = all_crate_deps(
+        normal = True,
+    ) + [":tensat_lib"],
+    proc_macro_deps = all_crate_deps(
+        proc_macro = True,
+    ),
+    edition = "2021",
+)
+
+cc_library(
+    name = "equality_saturation",
+    hdrs = ["Passes/EqualitySaturation.h"],
+    deps = [
+        ":cxx_core",
+        "@llvm-project//mlir:IR",
+    ],
+    strip_include_prefix = "Passes",
+)
+
+rust_cxx_bridge(
+    name = "tensat_bridge",
+    src = "deps/tensat/src/input.rs",
+    deps = [
+        ":cxx_core",
+        ":equality_saturation",
+    ],
+)
+
+genrule(
+    name = "cxx_header",
+    outs = ["cxx.h"], 
+    cmd = "cxxbridge --header -o $(location cxx.h)",
+)
+
+cc_library(
+    name = "cxx_core",
+    hdrs = ["cxx.h"],
+    include_prefix = "rust",
+)
+
+cc_binary(
+    name = "graphtest",
+    visibility = ["//visibility:public"],
+    srcs = ["deps/tensat/src/graph.cc"],
+    deps = [
+        ":tensat_bridge",
+        ":tensat_lib",
+    ]
+)   

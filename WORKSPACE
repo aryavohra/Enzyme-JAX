@@ -57,6 +57,55 @@ http_archive(
     urls = ["https://github.com/EnzymeAD/Enzyme/archive/{commit}.tar.gz".format(commit = ENZYME_COMMIT)],
 )
 
+http_archive(
+    name = "upb",
+    sha256 = "61d0417abd60e65ed589c9deee7c124fe76a4106831f6ad39464e1525cef1454",
+    strip_prefix = "upb-9effcbcb27f0a665f9f345030188c0b291e32482",
+    patch_cmds = [
+        "sed -i.bak0 's/@bazel_tools\\/\\/platforms:windows/@platforms\\/\\/os:windows/g' BUILD",
+        "sed -i.bak0 's/-Werror//g' BUILD"
+    ],
+    url = "https://github.com/protocolbuffers/upb/archive/9effcbcb27f0a665f9f345030188c0b291e32482.tar.gz"
+)
+
+load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+http_archive(
+    name = "bazel_skylib",
+    sha256 = "bc283cdfcd526a52c3201279cda4bc298652efa898b10b4db0837dc51652756f",
+    urls = [
+        "https://mirror.bazel.build/github.com/bazelbuild/bazel-skylib/releases/download/1.7.1/bazel-skylib-1.7.1.tar.gz",
+        "https://github.com/bazelbuild/bazel-skylib/releases/download/1.7.1/bazel-skylib-1.7.1.tar.gz",
+    ],
+)
+
+load("@bazel_skylib//:workspace.bzl", "bazel_skylib_workspace")
+bazel_skylib_workspace()
+
+http_archive(
+    name = "rules_rust",
+    integrity = "sha256-JLN47ZcAbx9wEr5Jiib4HduZATGLiDgK7oUi/fvotzU=",
+    urls = ["https://github.com/bazelbuild/rules_rust/releases/download/0.42.1/rules_rust-v0.42.1.tar.gz"],
+)
+
+load("@rules_rust//rust:repositories.bzl", "rules_rust_dependencies", "rust_register_toolchains")
+rules_rust_dependencies()
+rust_register_toolchains()
+
+load("@rules_rust//crate_universe:repositories.bzl", "crate_universe_dependencies")
+crate_universe_dependencies()
+
+load("@rules_rust//crate_universe:defs.bzl", "crates_repository", "crate")
+
+crates_repository(
+    name = "tensat_crate_index",
+    cargo_lockfile = "//src/enzyme_ad/jax:deps/tensat/Cargo.Bazel.lock",
+    lockfile = "//src/enzyme_ad/jax:deps/tensat/cargo-bazel-lock.json",
+    manifests = ["//src/enzyme_ad/jax:deps/tensat/Cargo.toml"],
+)
+
+load("@tensat_crate_index//:defs.bzl", tensat_crate_repositories = "crate_repositories")
+tensat_crate_repositories()
 
 load("@xla//third_party/llvm:workspace.bzl", llvm = "repo")
 llvm("llvm-raw")

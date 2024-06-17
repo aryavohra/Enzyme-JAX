@@ -1,21 +1,23 @@
+from absl.testing import absltest
 import jax.numpy as jnp
 import jax.random
 import jax.lax
 import enzyme_ad.jax as enzyme_jax
 
-def square(x, y):
-    return jnp.transpose((x * y + x - y) / (jnp.exp(x) * jnp.tanh(y)))
-    # return jnp.exp(x)
+def test(x, y):
+    return (x * y + x - y) / (x + y)
 
-sqjit = jax.jit(
-    enzyme_jax.enzyme_jax_ir(
-        pipeline_options=enzyme_jax.JaXPipeline(
-            "equality-saturation-pass"
+class Simple(absltest.TestCase):
+    def test_simple_random(self):
+        jfunc = jax.jit(test)
+
+        efunc = jax.jit(
+            enzyme_jax.enzyme_jax_ir(pipeline_options=enzyme_jax.JaXPipeline("equality-saturation-pass"),)(test)
         )
-    )(square)
-)
+        a = jnp.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+        b = jnp.array([[6.0, 5.0, 4.0], [3.0, 2.0, 1.0]])
+        eres = efunc(a, b)
+        print("enzyme forward", eres)
 
-a = jnp.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
-b = jnp.array([[6.0, 5.0, 4.0], [3.0, 2.0, 1.0]])
-
-print(sqjit(a, b))
+if __name__ == "__main__":
+    absltest.main()
