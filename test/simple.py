@@ -3,17 +3,9 @@ import jax.numpy as jnp
 import jax.random
 import jax.lax
 import enzyme_ad.jax as enzyme_jax
-import numpy as np
-import timeit
-
-argv = ("-I/usr/include/c++/11", "-I/usr/include/x86_64-linux-gnu/c++/11")
-
-pipeline = enzyme_jax.JaXPipeline()
-# pipeline = enzyme_jax.NewXLAPipeline(mlirad=False)
 
 def test(x, y):
-    return x + y
-
+    return (x * y + x - y) / (x + y)
 
 class Simple(absltest.TestCase):
     def test_simple_random(self):
@@ -22,11 +14,10 @@ class Simple(absltest.TestCase):
         efunc = jax.jit(
             enzyme_jax.enzyme_jax_ir(pipeline_options=enzyme_jax.JaXPipeline("equality-saturation-pass"),)(test)
         )
-
-        eres = efunc(3, 5)
+        a = jnp.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+        b = jnp.array([[6.0, 5.0, 4.0], [3.0, 2.0, 1.0]])
+        eres = efunc(a, b)
         print("enzyme forward", eres)
-
-
 
 if __name__ == "__main__":
     absltest.main()
