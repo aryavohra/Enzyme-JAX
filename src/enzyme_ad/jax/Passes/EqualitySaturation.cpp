@@ -636,8 +636,14 @@ namespace {
       auto graph = create_egraph(&unsupportedOpsInGraph, module);
       
       auto optimized = graph->optimize();
+
+      // TODO: Just for testing, remove later
       for (auto& node : optimized) {
-        std::cout << node.name << std::endl;
+        std::cout << node.name << ' ';
+        for (auto& i : node.operands) {
+          std::cout << i << ' ';
+        }
+        std::cout << std::endl;
       }
       
     }
