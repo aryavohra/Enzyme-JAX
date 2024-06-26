@@ -11,11 +11,11 @@ class Simple(absltest.TestCase):
     def test_simple_random(self):
         jfunc = jax.jit(test)
 
-        efunc = jax.jit(
-            enzyme_jax.enzyme_jax_ir(pipeline_options=enzyme_jax.JaXPipeline("equality-saturation-pass"),)(test)
-        )
+        efunc = enzyme_jax.enzyme_jax_ir(pipeline_options=enzyme_jax.JaXPipeline("equality-saturation-pass"),)(test)
+        
         a = jnp.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
         b = jnp.array([[6.0, 5.0, 4.0], [3.0, 2.0, 1.0]])
+        
         eres = efunc(a, b)
         print("enzyme forward", eres)
 
