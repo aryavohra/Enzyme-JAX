@@ -610,7 +610,7 @@ namespace {
       return tensorInfo;
     }
 
-    Box<tensat::CppGraphConverter> create_egraph(
+    Box<tensat::CppGraphConverter> createEgraph(
         std::unordered_map<int, Operation*> *unsupportedOpsInGraph,
         ModuleOp module) {
 
@@ -629,11 +629,70 @@ namespace {
       return graph;
     }
 
+    void reconstructStablehlo(ModuleOp *root, rust::vec<tensat::Node> &nodes) {
+      auto context = root->getContext();
+      OpBuilder builder(context);
+
+      std::vector<Operation*> ops;
+
+      // Find funcOp to get the block.
+      func::FuncOp funcOp;
+
+      for (auto &op : root->getBody()->getOperations()) {
+        if (isa<func::FuncOp>(op)) {
+          funcOp = cast<func::FuncOp>(op);
+          break;
+        }
+      }
+
+      auto& region = funcOp.getRegion();
+      auto& block = funcOp.getRegion().front();
+
+      block.clear();
+
+      auto location = builder.getUnknownLoc();
+
+      for (auto& node : nodes) {
+        Operation* newOp;
+
+        // TODO: abstract away binary ops
+        if (node.name == "AddOp") {
+          auto lhs = ops[node.operands[0]];
+          auto rhs = ops[node.operands[1]];
+          newOp = builder.create<stablehlo::AddOp>(location, lhs->getResult(0), rhs->getResult(0));
+        } else if (node.name == "SubtractOp") {
+          auto lhs = ops[node.operands[0]];
+          auto rhs = ops[node.operands[1]];
+          newOp = builder.create<stablehlo::SubtractOp>(location, lhs->getResult(0), rhs->getResult(0));
+        } else if (node.name == "MulOp") {
+          auto lhs = ops[node.operands[0]];
+          auto rhs = ops[node.operands[1]];
+          newOp = builder.create<stablehlo::MulOp>(location, lhs->getResult(0), rhs->getResult(0));
+        } else if (node.name == "DivOp") {
+          auto lhs = ops[node.operands[0]];
+          auto rhs = ops[node.operands[1]];
+          newOp = builder.create<stablehlo::DivOp>(location, lhs->getResult(0), rhs->getResult(0));
+        } else if (node.name == "Input") {
+          // TODO: implement
+        } else {
+          // TODO: implement (even if just dummy) - if we don't, then ops will have different indices as nodes
+        }
+
+        block.push_back(newOp);
+        ops.push_back(newOp);
+      }
+
+      assert(!block.empty());
+
+      auto returnOp = builder.create<func::ReturnOp>(builder.getUnknownLoc(), block.back().getResults());
+      block.push_back(returnOp);
+    }
+
     void runOnOperation() override {
       ModuleOp module = getOperation();
       std::unordered_map<int, Operation*> unsupportedOpsInGraph;
 
-      auto graph = create_egraph(&unsupportedOpsInGraph, module);
+      auto graph = createEgraph(&unsupportedOpsInGraph, module);
       
       auto optimized = graph->optimize();
 
@@ -645,7 +704,10 @@ namespace {
         }
         std::cout << std::endl;
       }
-      
+
+      std::cout << "reconstructing\n";
+      reconstructStablehlo(&module, optimized);
+      module.dump();
     }
   };
 }  // end anonymous namespace
