@@ -432,14 +432,15 @@ namespace {
       } else if (auto arg = operand.dyn_cast<BlockArgument>()) {
         // Handle BlockArguments which represent function parameters
         if (isa<TensorType>(operand.getType())) {
-          auto &tensorInfo = (*blockArgToTensorInfo)[arg.getArgNumber()];
+          int32_t block_arg_number = arg.getArgNumber();
+          auto &tensorInfo = (*blockArgToTensorInfo)[block_arg_number];
           if (!tensorInfo) {
-      auto shape = operand.getType().cast<TensorType>().getShape();
-      auto dims = castArrayRefToInt32(shape);
-      auto input_slice = rust::Slice<const int32_t>{
-        dims.data(), static_cast<size_t>(dims.size())};
-      tensorInfo = graph->new_input(input_slice).into_raw();
-      (*blockArgToTensorInfo)[arg.getArgNumber()] = tensorInfo;
+            auto shape = operand.getType().cast<TensorType>().getShape();
+            auto dims = castArrayRefToInt32(shape);
+            auto input_slice = rust::Slice<const int32_t>{
+              dims.data(), static_cast<size_t>(dims.size())};
+            tensorInfo = graph->new_input(block_arg_number, input_slice).into_raw();
+            (*blockArgToTensorInfo)[block_arg_number] = tensorInfo;
           }
           return tensorInfo;
         } else {
@@ -633,7 +634,7 @@ namespace {
       auto context = root->getContext();
       OpBuilder builder(context);
 
-      std::vector<Operation*> ops;
+      std::vector<Value> opVals;
 
       // Find funcOp to get the block.
       func::FuncOp funcOp;
@@ -652,34 +653,38 @@ namespace {
 
       auto location = builder.getUnknownLoc();
 
-      for (auto& node : nodes) {
-        Operation* newOp;
 
-        // TODO: abstract away binary ops
+      for (auto& node : nodes) {
+        Operation* newOp = nullptr;
+
+        // Create the new operation based on the operands
         if (node.name == "AddOp") {
-          auto lhs = ops[node.operands[0]];
-          auto rhs = ops[node.operands[1]];
-          newOp = builder.create<stablehlo::AddOp>(location, lhs->getResult(0), rhs->getResult(0));
+          newOp = builder.create<stablehlo::AddOp>(location, opVals[node.operands[0]], opVals[node.operands[1]]);
         } else if (node.name == "SubtractOp") {
-          auto lhs = ops[node.operands[0]];
-          auto rhs = ops[node.operands[1]];
-          newOp = builder.create<stablehlo::SubtractOp>(location, lhs->getResult(0), rhs->getResult(0));
+          newOp = builder.create<stablehlo::SubtractOp>(location, opVals[node.operands[0]], opVals[node.operands[1]]);
         } else if (node.name == "MulOp") {
-          auto lhs = ops[node.operands[0]];
-          auto rhs = ops[node.operands[1]];
-          newOp = builder.create<stablehlo::MulOp>(location, lhs->getResult(0), rhs->getResult(0));
+          newOp = builder.create<stablehlo::MulOp>(location, opVals[node.operands[0]], opVals[node.operands[1]]);
         } else if (node.name == "DivOp") {
-          auto lhs = ops[node.operands[0]];
-          auto rhs = ops[node.operands[1]];
-          newOp = builder.create<stablehlo::DivOp>(location, lhs->getResult(0), rhs->getResult(0));
+          newOp = builder.create<stablehlo::DivOp>(location, opVals[node.operands[0]], opVals[node.operands[1]]);
         } else if (node.name == "Input") {
-          // TODO: implement
+          int blockArgNumber = nodes[node.operands[1]].operands[0];
+          opVals.push_back(block.getArgument(blockArgNumber));
+          continue;
         } else {
-          // TODO: implement (even if just dummy) - if we don't, then ops will have different indices as nodes
+          // TODO: implement other operations
+          std::cout << node.name << "\n";
         }
 
-        block.push_back(newOp);
-        ops.push_back(newOp);
+        if (newOp) {
+          block.push_back(newOp);
+          opVals.push_back(newOp->getResult(0));
+        } else {
+          // This is bad practice, as we're pushing nullptr
+          // to ops in case of Input, Num, or Var nodes. This
+          // is unsafe, but maintains indexing. We could use
+          // some llvm no-op, but that would not be much better.
+          opVals.push_back(nullptr);
+        }
       }
 
       assert(!block.empty());
