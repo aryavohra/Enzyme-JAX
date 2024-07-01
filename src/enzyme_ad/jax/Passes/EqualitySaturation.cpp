@@ -670,11 +670,11 @@ namespace {
 
         // Create the new operation based on the operands
         if (node.name == "NegOp") {
-          createUnaryOp<stablehlo::NegOp>(builder, opVals, node);
+          newOp = createUnaryOp<stablehlo::NegOp>(builder, opVals, node);
         } else if (node.name == "TanhOp") {
-          createUnaryOp<stablehlo::TanhOp>(builder, opVals, node);
+          newOp = createUnaryOp<stablehlo::TanhOp>(builder, opVals, node);
         } else if (node.name == "ExpOp") {
-          createUnaryOp<stablehlo::ExpOp>(builder, opVals, node);
+          newOp = createUnaryOp<stablehlo::ExpOp>(builder, opVals, node);
         } else if (node.name == "AddOp") {
           newOp = createBinaryOp<stablehlo::AddOp>(builder, opVals, node);
         } else if (node.name == "SubtractOp") {
