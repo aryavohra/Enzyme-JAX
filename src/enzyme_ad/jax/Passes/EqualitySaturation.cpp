@@ -37,6 +37,7 @@
 #include <string>
 #include <chrono>
 #include <memory>
+#include <sstream>
 
 #define DEBUG_TYPE "enzyme"
 
@@ -532,10 +533,10 @@ namespace {
           std::vector<int32_t> permutation = castArrayRefToInt32(transpose.getPermutation());
           auto permutation_slice = rust::Slice<const int32_t> {
             permutation.data(), static_cast<size_t>(permutation.size())};
-            tensorInfo = graph->new_transpose_op(
-              *handleEnodeOperandPartial(transpose.getOperand()),
-              permutation_slice
-            ).into_raw();
+          tensorInfo = graph->new_transpose_op(
+            *handleEnodeOperandPartial(transpose.getOperand()),
+            permutation_slice
+          ).into_raw();
         } else if (isa<stablehlo::ReshapeOp>(op)) {
           auto reshape = cast<stablehlo::ReshapeOp>(op);
           if (auto output_tensor = reshape.getResult().getType().cast<TensorType>()) {
@@ -642,6 +643,21 @@ namespace {
       return builder.create<T>(location, opVals[node.operands[0]], opVals[node.operands[1]]);
     }
 
+    /**
+     * Parse the underscore-separated sequence strings (e.g 128_128_128) emitted by tensat node construction.
+    */
+    llvm::ArrayRef<int64_t> parseUnderscore(rust::string &seq) {
+      std::vector<int64_t> result;
+      std::stringstream ss(static_cast<std::string>(seq));
+      std::string seg;
+
+      while (std::getline(ss, seg, '_')) {
+        result.push_back(std::stoll(seg));
+      }
+
+      return llvm::ArrayRef(result);
+    }
+
     void reconstructStablehlo(ModuleOp *root, rust::vec<tensat::Node> &nodes) {
       auto context = root->getContext();
       OpBuilder builder(context);
@@ -691,6 +707,13 @@ namespace {
           int blockArgNumber = nodes[node.operands[1]].operands[0];
           opVals.push_back(block.getArgument(blockArgNumber));
           continue;
+        } else if (node.name == "Transpose") {
+          auto input = opVals[node.operands[0]];
+          // TODO: Can this be done cleaner, getting the Value earlier from Var instead of accessing now?
+          //  Can't be certain until we've implemented many ops using Var.
+          // TODO: Untested
+          auto permutation = parseUnderscore(nodes[node.operands[1]].label);
+          newOp = builder.create<stablehlo::TransposeOp>(location, input, permutation);
         } else {
           // TODO: implement other operations
           std::cout << node.name << "\n";
