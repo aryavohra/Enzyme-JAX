@@ -630,6 +630,18 @@ namespace {
       return graph;
     }
 
+    template <typename T>
+    Operation* createUnaryOp(OpBuilder &builder, std::vector<Value>& opVals, tensat::Node &node) {
+      auto location = builder.getUnknownLoc();
+      return builder.create<T>(location, opVals[node.operands[0]]);
+    }
+
+    template <typename T>
+    Operation* createBinaryOp(OpBuilder &builder, std::vector<Value>& opVals, tensat::Node &node) {
+      auto location = builder.getUnknownLoc();
+      return builder.create<T>(location, opVals[node.operands[0]], opVals[node.operands[1]]);
+    }
+
     void reconstructStablehlo(ModuleOp *root, rust::vec<tensat::Node> &nodes) {
       auto context = root->getContext();
       OpBuilder builder(context);
@@ -653,19 +665,28 @@ namespace {
 
       auto location = builder.getUnknownLoc();
 
-
       for (auto& node : nodes) {
         Operation* newOp = nullptr;
 
         // Create the new operation based on the operands
-        if (node.name == "AddOp") {
-          newOp = builder.create<stablehlo::AddOp>(location, opVals[node.operands[0]], opVals[node.operands[1]]);
+        if (node.name == "NegOp") {
+          createUnaryOp<stablehlo::NegOp>(builder, opVals, node);
+        } else if (node.name == "TanhOp") {
+          createUnaryOp<stablehlo::TanhOp>(builder, opVals, node);
+        } else if (node.name == "ExpOp") {
+          createUnaryOp<stablehlo::ExpOp>(builder, opVals, node);
+        } else if (node.name == "AddOp") {
+          newOp = createBinaryOp<stablehlo::AddOp>(builder, opVals, node);
         } else if (node.name == "SubtractOp") {
-          newOp = builder.create<stablehlo::SubtractOp>(location, opVals[node.operands[0]], opVals[node.operands[1]]);
+          newOp = createBinaryOp<stablehlo::SubtractOp>(builder, opVals, node);
         } else if (node.name == "MulOp") {
-          newOp = builder.create<stablehlo::MulOp>(location, opVals[node.operands[0]], opVals[node.operands[1]]);
+          newOp = createBinaryOp<stablehlo::MulOp>(builder, opVals, node);
         } else if (node.name == "DivOp") {
-          newOp = builder.create<stablehlo::DivOp>(location, opVals[node.operands[0]], opVals[node.operands[1]]);
+          newOp = createBinaryOp<stablehlo::DivOp>(builder, opVals, node);
+        } else if (node.name == "MinOp") {
+          newOp = createBinaryOp<stablehlo::MinOp>(builder, opVals, node);
+        } else if (node.name == "MaxOp") {
+          newOp = createBinaryOp<stablehlo::MaxOp>(builder, opVals, node);
         } else if (node.name == "Input") {
           int blockArgNumber = nodes[node.operands[1]].operands[0];
           opVals.push_back(block.getArgument(blockArgNumber));
