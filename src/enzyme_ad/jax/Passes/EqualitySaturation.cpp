@@ -593,15 +593,25 @@ namespace {
           }
           auto precision_config_slice = rust::Slice<const int>{
             precision_configs.data(), static_cast<size_t>(precision_configs.size())};
-          tensorInfo = graph->new_dot_general_op(
-            *handleEnodeOperandPartial(dot_general.getLhs()),
-            *handleEnodeOperandPartial(dot_general.getRhs()),
-            lhs_batch_dim,
-            rhs_batch_dim,
-            lhs_contracting_dim,
-            rhs_contracting_dim,
-            precision_config_slice
+
+          if (auto output_tensor = dot_general.getResult().getType().cast<TensorType>()) {
+            auto shape = castArrayRefToInt32(output_tensor.getShape());
+            auto output_shape_slice = rust::Slice<const int32_t> {
+              shape.data(), static_cast<size_t>(shape.size())};
+
+            tensorInfo = graph->new_dot_general_op(
+              *handleEnodeOperandPartial(dot_general.getLhs()),
+              *handleEnodeOperandPartial(dot_general.getRhs()),
+              lhs_batch_dim,
+              rhs_batch_dim,
+              lhs_contracting_dim,
+              rhs_contracting_dim,
+              precision_config_slice,
+              output_shape_slice
           ).into_raw();
+          } else {
+            std::cout << "EqualitySaturationPass: result of stablehlo::DotGeneralOp has non-tensor type" << std::endl;
+          }
         }
       }
 
@@ -658,6 +668,17 @@ namespace {
       return llvm::ArrayRef(result);
     }
 
+    /**
+     * Create a new mlir::Type based on the element type of an existing mlir::Type and the provided shape.
+    */
+
+    mlir::Type deriveOutputType(mlir::Value &input, llvm::ArrayRef<int64_t> shape) {
+      auto inputType = input.getType();
+      assert(isa<TensorType>(inputType));
+      auto elementType = inputType.cast<TensorType>().getElementType();
+      auto newType = RankedTensorType::get(shape, elementType);
+    }
+
     void reconstructStablehlo(ModuleOp *root, rust::vec<tensat::Node> &nodes) {
       auto context = root->getContext();
       OpBuilder builder(context);
@@ -707,13 +728,51 @@ namespace {
           int blockArgNumber = nodes[node.operands[1]].operands[0];
           opVals.push_back(block.getArgument(blockArgNumber));
           continue;
-        } else if (node.name == "Transpose") {
+        } else if (node.name == "TransposeOp") {
           auto input = opVals[node.operands[0]];
           // TODO: Can this be done cleaner, getting the Value earlier from Var instead of accessing now?
           //  Can't be certain until we've implemented many ops using Var.
           // TODO: Untested
           auto permutation = parseUnderscore(nodes[node.operands[1]].label);
           newOp = builder.create<stablehlo::TransposeOp>(location, input, permutation);
+        } else if (node.name == "ReshapeOp") {
+          // TODO: Untested
+          auto input = opVals[node.operands[0]];
+          auto shape = parseUnderscore(nodes[node.operands[1]].label);
+
+          auto newType = deriveOutputType(input, shape);
+          newOp = builder.create<stablehlo::ReshapeOp>(location, newType, input);
+        } else if (node.name == "DotGeneralOp") {
+          // TODO: Untested
+          auto lhs = opVals[node.operands[0]];
+          auto rhs = opVals[node.operands[1]];
+
+          auto lhsBatchDim = parseUnderscore(nodes[node.operands[2]].label);
+          auto rhsBatchDim = parseUnderscore(nodes[node.operands[3]].label);
+          auto lhsContractDim = parseUnderscore(nodes[node.operands[4]].label);
+          auto rhsContractDim = parseUnderscore(nodes[node.operands[5]].label);
+          auto precisionConfig = parseUnderscore(nodes[node.operands[6]].label);
+          auto shape = parseUnderscore(nodes[node.operands[7]].label);
+
+          auto dotDimensionNumbersAttr = stablehlo::DotDimensionNumbersAttr::get(context, lhsBatchDim, rhsBatchDim, lhsContractDim, rhsContractDim);
+          
+          std::vector<Attribute> precisionVec;
+
+          for (auto& precision : precisionConfig) {
+            switch (precision) {
+              case 0:
+                precisionVec.push_back(stablehlo::PrecisionAttr::get(context, stablehlo::Precision::DEFAULT)); break;
+              case 1:
+                precisionVec.push_back(stablehlo::PrecisionAttr::get(context, stablehlo::Precision::HIGH)); break;
+              case 2:
+                precisionVec.push_back(stablehlo::PrecisionAttr::get(context, stablehlo::Precision::HIGHEST)); break;
+            }
+          }
+
+          // TODO: Is lhs correct here?
+          auto newType = deriveOutputType(lhs, shape);
+
+          newOp = builder.create<stablehlo::DotGeneralOp>(location, newType, lhs, rhs, dotDimensionNumbersAttr, mlir::ArrayAttr::get(context, llvm::ArrayRef(precisionVec)));
         } else {
           // TODO: implement other operations
           std::cout << node.name << "\n";
