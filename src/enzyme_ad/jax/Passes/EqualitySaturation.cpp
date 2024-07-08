@@ -149,16 +149,11 @@ public:
     return builder.create(zeroState);
   }
 
-  static Operation *cloneOpInContext(OpBuilder &builder, Operation *op) {
-    IRMapping mapping;
-    return cloneOpInContext(builder, op, mapping);
-  }
-
 private:
   static llvm::DenseMap<Operation*, uint64_t, OperationMapInfo> runtimeCache;
 
   inline static bool logsInitialized;
-
+  
   /**
    * Create a clone of the operation in the new context recursively (i.e. going down to the regions).
    * Just using op->clone() will preserve context of the original operation, which poses a problem later
@@ -219,6 +214,10 @@ private:
     return newOp;
   }
 
+  static Operation *cloneOpInContext(OpBuilder &builder, Operation *op) {
+    IRMapping mapping;
+    return cloneOpInContext(builder, op, mapping);
+  }
 
   /**
    * Wrap operation into a module, with dummy (constant zero) inputs as
@@ -402,8 +401,8 @@ namespace {
   class EqualitySaturationPass
     : public PassWrapper<EqualitySaturationPass, OperationPass<ModuleOp>> {
     public:
-    StringRef getArgument() const override { return "equality-saturation-pass"; }
-    StringRef getDescription() const override {
+      StringRef getArgument() const override { return "equality-saturation-pass"; }
+      StringRef getDescription() const override {
       return "Optimizes HLO graph using a Rust-based optimizer";
     }
 
@@ -470,8 +469,8 @@ namespace {
           return tensorInfo;
         } else {
           std::cout
-      << "EqualitySaturationPass does not support this argument type!"
-      << "\n";
+            << "EqualitySaturationPass does not support this argument type!"
+            << "\n";
           operand.getType().dump();
           return nullptr;
         }
@@ -483,172 +482,169 @@ namespace {
     }
 
     template <typename CreateOpFunc, typename... Args>
-      tensat::TensorInfo* handleOperation(
-          Operation* op,
-          CreateOpFunc createOpFunc,
-          std::unordered_map<Operation*, tensat::TensorInfo*> *opToTensorInfo,
-          std::unordered_map<int, tensat::TensorInfo*> *blockArgToTensorInfo,
-          std::vector<Operation*> *blackboxIDToTensorInfo,
-	  OpBuilder &builder,
-          Box<tensat::CppGraphConverter> &graph,
-          Args&&... args) {
-        auto args_tuple = std::forward_as_tuple(std::forward<Args>(args)...);
-        auto handleArgs = [&](auto&&... operands) {
-          return std::make_tuple(handleEnodeOperand(operands, opToTensorInfo, blockArgToTensorInfo, blackboxIDToTensorInfo, builder, graph)...);
-        };
-
-        // Apply handleArgs to unpack the tuple of operands into handleEnodeOperand calls
-        auto operandInfos = std::apply(handleArgs, args_tuple);
-
-        // Use std::apply to unpack operandInfos into the function call
-        return std::apply([&](auto&&... unpacked) {
-      return std::invoke(createOpFunc, *graph, *unpacked...).into_raw();
-      }, operandInfos);
-      }
-
-
-      tensat::TensorInfo *dfs(Operation* op,
+    tensat::TensorInfo* handleOperation(
+        Operation* op,
+        CreateOpFunc createOpFunc,
         std::unordered_map<Operation*, tensat::TensorInfo*> *opToTensorInfo,
         std::unordered_map<int, tensat::TensorInfo*> *blockArgToTensorInfo,
         std::vector<Operation*> *blackboxIDToTensorInfo,
-	OpBuilder &builder,
-        Box<tensat::CppGraphConverter> &graph) {
+        OpBuilder &builder,
+        Box<tensat::CppGraphConverter> &graph,
+        Args&&... args) {
+      auto args_tuple = std::forward_as_tuple(std::forward<Args>(args)...);
+      auto handleArgs = [&](auto&&... operands) {
+        return std::make_tuple(handleEnodeOperand(operands, opToTensorInfo, blockArgToTensorInfo, blackboxIDToTensorInfo, builder, graph)...);
+      };
+
+      // Apply handleArgs to unpack the tuple of operands into handleEnodeOperand calls
+      auto operandInfos = std::apply(handleArgs, args_tuple);
+
+      // Use std::apply to unpack operandInfos into the function call
+      return std::apply([&](auto&&... unpacked) {
+        return std::invoke(createOpFunc, *graph, *unpacked...).into_raw();
+      }, operandInfos);
+    }
+
+    tensat::TensorInfo *dfs(Operation* op,
+      std::unordered_map<Operation*, tensat::TensorInfo*> *opToTensorInfo,
+      std::unordered_map<int, tensat::TensorInfo*> *blockArgToTensorInfo,
+      std::vector<Operation*> *blackboxIDToTensorInfo,
+      OpBuilder &builder,
+      Box<tensat::CppGraphConverter> &graph) {
+      std::cout << "DFS AT " << op->getName().getStringRef().str() << "\n";
+
       if (opToTensorInfo->find(op) != opToTensorInfo->end()) {
         return opToTensorInfo->at(op);
       }
-
       tensat::TensorInfo *tensorInfo = nullptr;
+      auto handleEnodeOperandPartial = [&](Value operand) {
+        return handleEnodeOperand(operand, opToTensorInfo, blockArgToTensorInfo, blackboxIDToTensorInfo, builder, graph); 
+      };
+      auto handleOperationPartial = [&](auto&& createOpFunc, auto&&... operands) {
+        return handleOperation(op, createOpFunc, opToTensorInfo, blockArgToTensorInfo, blackboxIDToTensorInfo, builder, graph, std::forward<decltype(operands)>(operands)...);
+      }; 
 
       if (isa<stablehlo::ConstantOp>(op)) {
         tensorInfo = graph->new_constant_op().into_raw();
-      } else {
-        auto handleEnodeOperandPartial = [&](Value operand) {
-          return handleEnodeOperand(operand, opToTensorInfo, blockArgToTensorInfo, blackboxIDToTensorInfo, builder, graph); 
-        };
-        auto handleOperationPartial = [&](auto&& createOpFunc, auto&&... operands) {
-          return handleOperation(op, createOpFunc, opToTensorInfo, blockArgToTensorInfo, blackboxIDToTensorInfo, builder, graph, std::forward<decltype(operands)>(operands)...);
-        }; 
-
-        if (isa<stablehlo::MulOp>(op)) {
-          auto mul = cast<stablehlo::MulOp>(op);
-          tensorInfo = handleOperationPartial(&tensat::CppGraphConverter::new_mul_op, mul.getLhs(), mul.getRhs());
-        } else if (isa<stablehlo::SubtractOp>(op)) {
-          auto subtract = cast<stablehlo::SubtractOp>(op);
-          tensorInfo = handleOperationPartial(&tensat::CppGraphConverter::new_subtract_op, subtract.getLhs(), subtract.getRhs());
-        } else if (isa<stablehlo::DivOp>(op)) {
-          auto div = cast<stablehlo::DivOp>(op);
-          tensorInfo = handleOperationPartial(&tensat::CppGraphConverter::new_div_op, div.getLhs(), div.getRhs());
-        } else if (isa<stablehlo::AddOp>(op)) {
-          auto add = cast<stablehlo::AddOp>(op);
-          tensorInfo = handleOperationPartial(&tensat::CppGraphConverter::new_add_op, add.getLhs(), add.getRhs());
-        } else if (isa<stablehlo::MinOp>(op)) {
-          auto min = cast<stablehlo::MinOp>(op);
-          tensorInfo = handleOperationPartial(&tensat::CppGraphConverter::new_min_op, min.getLhs(), min.getRhs());
-        } else if (isa<stablehlo::MaxOp>(op)) {
-          auto max = cast<stablehlo::MaxOp>(op);
-          tensorInfo = handleOperationPartial(&tensat::CppGraphConverter::new_max_op, max.getLhs(), max.getRhs());
-        } else if (isa<stablehlo::TanhOp>(op)) {
-          auto tanh = cast<stablehlo::TanhOp>(op);
-          tensorInfo = handleOperationPartial(&tensat::CppGraphConverter::new_tanh_op, tanh.getOperand());
-        } else if (isa<stablehlo::NegOp>(op)) {
-          auto neg = cast<stablehlo::NegOp>(op);
-          tensorInfo = handleOperationPartial(&tensat::CppGraphConverter::new_neg_op, neg.getOperand());
-        } else if (isa<stablehlo::ExpOp>(op)) {
-          auto exp = cast<stablehlo::ExpOp>(op);
-          tensorInfo = handleOperationPartial(&tensat::CppGraphConverter::new_exp_op, exp.getOperand());
-        } else if (isa<stablehlo::TransposeOp>(op)) {
-          auto transpose = cast<stablehlo::TransposeOp>(op);
-          std::vector<int32_t> permutation = castArrayRefToInt32(transpose.getPermutation());
-          auto permutation_slice = rust::Slice<const int32_t> {
-            permutation.data(), static_cast<size_t>(permutation.size())};
-          tensorInfo = graph->new_transpose_op(
-            *handleEnodeOperandPartial(transpose.getOperand()),
-            permutation_slice
+      } else if (isa<stablehlo::MulOp>(op)) {
+        auto mul = cast<stablehlo::MulOp>(op);
+        tensorInfo = handleOperationPartial(&tensat::CppGraphConverter::new_mul_op, mul.getLhs(), mul.getRhs());
+      } else if (isa<stablehlo::SubtractOp>(op)) {
+        auto subtract = cast<stablehlo::SubtractOp>(op);
+        tensorInfo = handleOperationPartial(&tensat::CppGraphConverter::new_subtract_op, subtract.getLhs(), subtract.getRhs());
+      } else if (isa<stablehlo::DivOp>(op)) {
+        auto div = cast<stablehlo::DivOp>(op);
+        tensorInfo = handleOperationPartial(&tensat::CppGraphConverter::new_div_op, div.getLhs(), div.getRhs());
+      } else if (isa<stablehlo::AddOp>(op)) {
+        auto add = cast<stablehlo::AddOp>(op);
+        tensorInfo = handleOperationPartial(&tensat::CppGraphConverter::new_add_op, add.getLhs(), add.getRhs());
+      } else if (isa<stablehlo::MinOp>(op)) {
+        auto min = cast<stablehlo::MinOp>(op);
+        tensorInfo = handleOperationPartial(&tensat::CppGraphConverter::new_min_op, min.getLhs(), min.getRhs());
+      } else if (isa<stablehlo::MaxOp>(op)) {
+        auto max = cast<stablehlo::MaxOp>(op);
+        tensorInfo = handleOperationPartial(&tensat::CppGraphConverter::new_max_op, max.getLhs(), max.getRhs());
+      } else if (isa<stablehlo::TanhOp>(op)) {
+        auto tanh = cast<stablehlo::TanhOp>(op);
+        tensorInfo = handleOperationPartial(&tensat::CppGraphConverter::new_tanh_op, tanh.getOperand());
+      } else if (isa<stablehlo::NegOp>(op)) {
+        auto neg = cast<stablehlo::NegOp>(op);
+        tensorInfo = handleOperationPartial(&tensat::CppGraphConverter::new_neg_op, neg.getOperand());
+      } else if (isa<stablehlo::ExpOp>(op)) {
+        auto exp = cast<stablehlo::ExpOp>(op);
+        tensorInfo = handleOperationPartial(&tensat::CppGraphConverter::new_exp_op, exp.getOperand());
+      } else if (isa<stablehlo::TransposeOp>(op)) {
+        auto transpose = cast<stablehlo::TransposeOp>(op);
+        std::vector<int32_t> permutation = castArrayRefToInt32(transpose.getPermutation());
+        auto permutation_slice = rust::Slice<const int32_t> {
+          permutation.data(), static_cast<size_t>(permutation.size())};
+        tensorInfo = graph->new_transpose_op(
+          *handleEnodeOperandPartial(transpose.getOperand()),
+          permutation_slice
+        ).into_raw();
+      } else if (isa<stablehlo::ReshapeOp>(op)) {
+        auto reshape = cast<stablehlo::ReshapeOp>(op);
+        if (auto output_tensor = reshape.getResult().getType().cast<TensorType>()) {
+          auto shape = castArrayRefToInt32(output_tensor.getShape());
+          auto output_shape_slice = rust::Slice<const int32_t> {
+            shape.data(), static_cast<size_t>(shape.size())};
+          tensorInfo = graph->new_reshape_op(
+            *handleEnodeOperandPartial(reshape.getOperand()),
+            output_shape_slice
           ).into_raw();
-        } else if (isa<stablehlo::ReshapeOp>(op)) {
-          auto reshape = cast<stablehlo::ReshapeOp>(op);
-          if (auto output_tensor = reshape.getResult().getType().cast<TensorType>()) {
-            auto shape = castArrayRefToInt32(output_tensor.getShape());
-            auto output_shape_slice = rust::Slice<const int32_t> {
-              shape.data(), static_cast<size_t>(shape.size())};
-            tensorInfo = graph->new_reshape_op(
-              *handleEnodeOperandPartial(reshape.getOperand()),
-              output_shape_slice
-            ).into_raw();
-          } else {
-            std::cout << "EqualitySaturationPass: result of stablehlo::ReshapeOp has non-tensor type" << std::endl;
-          }
-        } else if (isa<stablehlo::IotaOp>(op)) {
-          auto iota = cast<stablehlo::IotaOp>(op);
-          int32_t iota_dimension = iota.getIotaDimension();
-          if (auto output_tensor = iota.getResult().getType().cast<TensorType>()) {
-            auto shape = castArrayRefToInt32(output_tensor.getShape());
-            auto output_shape_slice = rust::Slice<const int32_t>{
-              shape.data(), static_cast<size_t>(shape.size())};
-            tensorInfo = graph->new_iota_op(
-              iota_dimension,
-              output_shape_slice
-            ).into_raw();
-          } else {
-            std::cout << "EqualitySaturationPass: result of stablehlo::IotaOp has non-tensor type" << std::endl;
-          }
-        } else if (isa<stablehlo::DotGeneralOp>(op)) {
-          // we might need more guards here
-          auto dot_general = cast<stablehlo::DotGeneralOp>(op);
-          auto dot_dim_attrs = dot_general.getDotDimensionNumbersAttr();
-          auto lhs_batch_dim = castArrayRefToInt32Slice(dot_dim_attrs.getLhsBatchingDimensions());
-          auto rhs_batch_dim = castArrayRefToInt32Slice(dot_dim_attrs.getRhsBatchingDimensions());
-          auto lhs_contracting_dim = castArrayRefToInt32Slice(dot_dim_attrs.getLhsContractingDimensions());
-          auto rhs_contracting_dim = castArrayRefToInt32Slice(dot_dim_attrs.getRhsContractingDimensions());
-          mlir::ArrayAttr precision = dot_general.getPrecisionConfig().value_or(mlir::ArrayAttr());
-          std::vector<int> precision_configs;
-          for (int i = 0; i < precision.size(); i++) {
-            auto precisionAttr = precision[i].dyn_cast<mlir::stablehlo::PrecisionAttr>();
-            if (!precisionAttr) continue;  // Skip if it's not a PrecisionAttr, although
-                  // such attributes should not exist here
-            mlir::stablehlo::Precision val = precisionAttr.getValue();
-            switch (val) {
-              case mlir::stablehlo::Precision::DEFAULT:
-                precision_configs.push_back(0);
-                break;
-              case mlir::stablehlo::Precision::HIGH:
-                precision_configs.push_back(1);
-                break;
-              case mlir::stablehlo::Precision::HIGHEST:
-                precision_configs.push_back(2);
-                break;
-            }
-          }
-          auto precision_config_slice = rust::Slice<const int>{
-            precision_configs.data(), static_cast<size_t>(precision_configs.size())};
-
-          if (auto output_tensor = dot_general.getResult().getType().cast<TensorType>()) {
-            auto shape = castArrayRefToInt32(output_tensor.getShape());
-            auto output_shape_slice = rust::Slice<const int32_t> {
-              shape.data(), static_cast<size_t>(shape.size())};
-
-            tensorInfo = graph->new_dot_general_op(
-              *handleEnodeOperandPartial(dot_general.getLhs()),
-              *handleEnodeOperandPartial(dot_general.getRhs()),
-              lhs_batch_dim,
-              rhs_batch_dim,
-              lhs_contracting_dim,
-              rhs_contracting_dim,
-              precision_config_slice,
-              output_shape_slice
+        } else {
+          std::cout << "EqualitySaturationPass: result of stablehlo::ReshapeOp has non-tensor type" << std::endl;
+        }
+      } else if (isa<stablehlo::IotaOp>(op)) {
+        auto iota = cast<stablehlo::IotaOp>(op);
+        int32_t iota_dimension = iota.getIotaDimension();
+        if (auto output_tensor = iota.getResult().getType().cast<TensorType>()) {
+          auto shape = castArrayRefToInt32(output_tensor.getShape());
+          auto output_shape_slice = rust::Slice<const int32_t>{
+            shape.data(), static_cast<size_t>(shape.size())};
+          tensorInfo = graph->new_iota_op(
+            iota_dimension,
+            output_shape_slice
           ).into_raw();
-          } else {
-            std::cout << "EqualitySaturationPass: result of stablehlo::DotGeneralOp has non-tensor type" << std::endl;
+        } else {
+          std::cout << "EqualitySaturationPass: result of stablehlo::IotaOp has non-tensor type" << std::endl;
+        }
+      } else if (isa<stablehlo::DotGeneralOp>(op)) {
+        // we might need more guards here
+        auto dot_general = cast<stablehlo::DotGeneralOp>(op);
+        auto dot_dim_attrs = dot_general.getDotDimensionNumbersAttr();
+        auto lhs_batch_dim = castArrayRefToInt32Slice(dot_dim_attrs.getLhsBatchingDimensions());
+        auto rhs_batch_dim = castArrayRefToInt32Slice(dot_dim_attrs.getRhsBatchingDimensions());
+        auto lhs_contracting_dim = castArrayRefToInt32Slice(dot_dim_attrs.getLhsContractingDimensions());
+        auto rhs_contracting_dim = castArrayRefToInt32Slice(dot_dim_attrs.getRhsContractingDimensions());
+        mlir::ArrayAttr precision = dot_general.getPrecisionConfig().value_or(mlir::ArrayAttr());
+        std::vector<int> precision_configs;
+        for (int i = 0; i < precision.size(); i++) {
+          auto precisionAttr = precision[i].dyn_cast<mlir::stablehlo::PrecisionAttr>();
+          if (!precisionAttr) continue;  // Skip if it's not a PrecisionAttr, although such attributes should not exist here
+          mlir::stablehlo::Precision val = precisionAttr.getValue();
+          switch (val) {
+            case mlir::stablehlo::Precision::DEFAULT:
+              precision_configs.push_back(0);
+              break;
+            case mlir::stablehlo::Precision::HIGH:
+              precision_configs.push_back(1);
+              break;
+            case mlir::stablehlo::Precision::HIGHEST:
+              precision_configs.push_back(2);
+              break;
           }
-        } else if (isa<stablehlo::ConvertOp>(op)) {
-	  auto convert = cast<stablehlo::ConvertOp>(op);
-	  auto copy = OperationTimer::cloneOpInContext(builder, op);
-	  blackboxIDToTensorInfo->push_back(copy);
-	  tensorInfo = graph->new_blackbox_1_op(
-              *handleEnodeOperandPartial(convert.getOperand()),
-	      blackboxIDToTensorInfo->size()-1
-	  ).into_raw();
-	}
+        }
+        auto precision_config_slice = rust::Slice<const int>{
+          precision_configs.data(), static_cast<size_t>(precision_configs.size())};
+
+        if (auto output_tensor = dot_general.getResult().getType().cast<TensorType>()) {
+          auto shape = castArrayRefToInt32(output_tensor.getShape());
+          auto output_shape_slice = rust::Slice<const int32_t> {
+            shape.data(), static_cast<size_t>(shape.size())};
+
+          tensorInfo = graph->new_dot_general_op(
+            *handleEnodeOperandPartial(dot_general.getLhs()),
+            *handleEnodeOperandPartial(dot_general.getRhs()),
+            lhs_batch_dim,
+            rhs_batch_dim,
+            lhs_contracting_dim,
+            rhs_contracting_dim,
+            precision_config_slice,
+            output_shape_slice
+          ).into_raw();
+        } else {
+          std::cout << "EqualitySaturationPass: result of stablehlo::DotGeneralOp has non-tensor type" << std::endl;
+        }
+      } else if (isa<stablehlo::ConvertOp>(op)) {
+        auto convert = cast<stablehlo::ConvertOp>(op);
+        // auto copy = OperationTimer::cloneOpInContext(builder, op);
+        auto copy = op->clone();
+        blackboxIDToTensorInfo->push_back(copy);
+        tensorInfo = graph->new_blackbox_1_op(
+          *handleEnodeOperandPartial(convert.getOperand()),
+          blackboxIDToTensorInfo->size()-1
+        ).into_raw();
       }
 
       if (tensorInfo != nullptr) {
@@ -660,7 +656,7 @@ namespace {
 
     Box<tensat::CppGraphConverter> createEgraph(
         std::vector<Operation*> *blackboxIDToTensorInfo,
-	OpBuilder &builder,
+	      OpBuilder &builder,
         ModuleOp module) {
 
       auto graph = tensat::new_converter();
@@ -668,11 +664,11 @@ namespace {
       std::unordered_map<Operation*, tensat::TensorInfo*> opToTensorInfo;
       std::unordered_map<int, tensat::TensorInfo*> blockArgToTensorInfo;
 
-      module.walk([&](mlir::Operation *op) {
-        std::cout << "ENTERING AT: " << op->getName().getStringRef().str() << "\n";
-        auto cost = OperationTimer::getCost(op, 100, 100);
-        llvm::outs() << "Cost: " << cost << "\n\n";
-        dfs(op, &opToTensorInfo, &blockArgToTensorInfo, blackboxIDToTensorInfo, builder, graph);
+      module.walk([&](func::ReturnOp op) {
+        // Call dfs() on the things that are returned.
+        for (auto value : op.getOperands()) {
+          dfs(value.getDefiningOp(), &opToTensorInfo, &blockArgToTensorInfo, blackboxIDToTensorInfo, builder, graph);
+        }
       });
 
       graph->print_rec_expr();
@@ -811,20 +807,20 @@ namespace {
           newOp = builder.create<stablehlo::DotGeneralOp>(location, newType, lhs, rhs, dotDimensionNumbersAttr, mlir::ArrayAttr::get(context, llvm::ArrayRef(precisionVec)));
         } else if (node.name == "blackbox_1") {
           root->dump();
-	  auto operand = opVals[node.operands[0]];
-	  // Really subtle error arose here from not handling Num properly.
-	  // We might want to have a num hashmap 
-	  auto blackboxID = nodes[node.operands[1]].operands[0];
-	  std::cout << "blackboxID " << blackboxID << "\n";
-	  Operation* newOp = blackboxIDToTensorInfo->at(blackboxID);
-	  std::cout << "opName " << newOp->getName().getStringRef().str() << "\n";
-	  newOp->setOperand(0, operand);
-	  std::cout << "set operand successfully" << "\n";
-	  // Do we need to account for insertion points at all?
-	  builder.insert(newOp);
+          auto operand = opVals[node.operands[0]];
+          // Really subtle error arose here from not handling Num properly.
+          // We might want to have a num hashmap 
+          auto blackboxID = nodes[node.operands[1]].operands[0];
+          std::cout << "blackboxID " << blackboxID << "\n";
+          Operation* newOp = blackboxIDToTensorInfo->at(blackboxID);
+          std::cout << "opName " << newOp->getName().getStringRef().str() << "\n";
+          newOp->setOperand(0, operand);
+          std::cout << "set operand successfully" << "\n";
+          // Do we need to account for insertion points at all?
+          builder.insert(newOp);
           block.push_back(newOp);
-	  std::cout << "pushed to block" << "\n";
-	  continue;
+          std::cout << "pushed to block" << "\n";
+          continue;
         } else {
           // TODO: implement other operations
           std::cout << node.name << "\n";
