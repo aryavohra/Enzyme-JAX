@@ -149,6 +149,11 @@ public:
     return builder.create(zeroState);
   }
 
+  static Operation *cloneOpInContext(OpBuilder &builder, Operation *op) {
+    IRMapping mapping;
+    return cloneOpInContext(builder, op, mapping);
+  }
+
 private:
   static llvm::DenseMap<Operation*, uint64_t, OperationMapInfo> runtimeCache;
 
@@ -214,10 +219,6 @@ private:
     return newOp;
   }
 
-  static Operation *cloneOpInContext(OpBuilder &builder, Operation *op) {
-    IRMapping mapping;
-    return cloneOpInContext(builder, op, mapping);
-  }
 
   /**
    * Wrap operation into a module, with dummy (constant zero) inputs as
@@ -406,6 +407,27 @@ namespace {
       return "Optimizes HLO graph using a Rust-based optimizer";
     }
 
+    int castMlirTypeToInt32(mlir::Type type) {
+      int res = -1;
+ //      switch (type) {
+ //        case mlir::IntegerType:
+	//   res = 0;
+	//   break;
+	// case mlir::FloatType:
+	//   res = 1;
+	//   break;
+	// case mlir::ComplexType:
+	//   res = 2;
+	//   break;
+	// case mlir::BooleanType:
+	//   res = 3;
+	//   break;
+	// default:
+	//   res = -1;
+ //      }
+      return res;
+    }
+
     std::vector<int32_t> castArrayRefToInt32(llvm::ArrayRef<int64_t> shape) {
       std::vector<int32_t> dims;
       dims.reserve(shape.size());
@@ -426,10 +448,12 @@ namespace {
         Value operand,
         std::unordered_map<Operation*, tensat::TensorInfo*> *opToTensorInfo,
         std::unordered_map<int, tensat::TensorInfo*> *blockArgToTensorInfo,
+        std::vector<Operation*> *blackboxIDToTensorInfo,
+	OpBuilder &builder,
         Box<tensat::CppGraphConverter> &graph) {
       if (auto defOp = operand.getDefiningOp()) {
         // Use existing TensorInfo if already processed
-        return dfs(defOp, opToTensorInfo, blockArgToTensorInfo, graph);
+        return dfs(defOp, opToTensorInfo, blockArgToTensorInfo, blackboxIDToTensorInfo, builder, graph);
       } else if (auto arg = operand.dyn_cast<BlockArgument>()) {
         // Handle BlockArguments which represent function parameters
         if (isa<TensorType>(operand.getType())) {
@@ -464,11 +488,13 @@ namespace {
           CreateOpFunc createOpFunc,
           std::unordered_map<Operation*, tensat::TensorInfo*> *opToTensorInfo,
           std::unordered_map<int, tensat::TensorInfo*> *blockArgToTensorInfo,
+          std::vector<Operation*> *blackboxIDToTensorInfo,
+	  OpBuilder &builder,
           Box<tensat::CppGraphConverter> &graph,
           Args&&... args) {
         auto args_tuple = std::forward_as_tuple(std::forward<Args>(args)...);
         auto handleArgs = [&](auto&&... operands) {
-          return std::make_tuple(handleEnodeOperand(operands, opToTensorInfo, blockArgToTensorInfo, graph)...);
+          return std::make_tuple(handleEnodeOperand(operands, opToTensorInfo, blockArgToTensorInfo, blackboxIDToTensorInfo, builder, graph)...);
         };
 
         // Apply handleArgs to unpack the tuple of operands into handleEnodeOperand calls
@@ -484,6 +510,8 @@ namespace {
       tensat::TensorInfo *dfs(Operation* op,
         std::unordered_map<Operation*, tensat::TensorInfo*> *opToTensorInfo,
         std::unordered_map<int, tensat::TensorInfo*> *blockArgToTensorInfo,
+        std::vector<Operation*> *blackboxIDToTensorInfo,
+	OpBuilder &builder,
         Box<tensat::CppGraphConverter> &graph) {
       if (opToTensorInfo->find(op) != opToTensorInfo->end()) {
         return opToTensorInfo->at(op);
@@ -495,10 +523,10 @@ namespace {
         tensorInfo = graph->new_constant_op().into_raw();
       } else {
         auto handleEnodeOperandPartial = [&](Value operand) {
-          return handleEnodeOperand(operand, opToTensorInfo, blockArgToTensorInfo, graph); 
+          return handleEnodeOperand(operand, opToTensorInfo, blockArgToTensorInfo, blackboxIDToTensorInfo, builder, graph); 
         };
         auto handleOperationPartial = [&](auto&& createOpFunc, auto&&... operands) {
-          return handleOperation(op, createOpFunc, opToTensorInfo, blockArgToTensorInfo, graph, std::forward<decltype(operands)>(operands)...);
+          return handleOperation(op, createOpFunc, opToTensorInfo, blockArgToTensorInfo, blackboxIDToTensorInfo, builder, graph, std::forward<decltype(operands)>(operands)...);
         }; 
 
         if (isa<stablehlo::MulOp>(op)) {
@@ -612,7 +640,15 @@ namespace {
           } else {
             std::cout << "EqualitySaturationPass: result of stablehlo::DotGeneralOp has non-tensor type" << std::endl;
           }
-        }
+        } else if (isa<stablehlo::ConvertOp>(op)) {
+	  auto convert = cast<stablehlo::ConvertOp>(op);
+	  auto copy = OperationTimer::cloneOpInContext(builder, op);
+	  blackboxIDToTensorInfo->push_back(copy);
+	  tensorInfo = graph->new_blackbox_1_op(
+              *handleEnodeOperandPartial(convert.getOperand()),
+	      blackboxIDToTensorInfo->size()-1
+	  ).into_raw();
+	}
       }
 
       if (tensorInfo != nullptr) {
@@ -623,10 +659,12 @@ namespace {
     }
 
     Box<tensat::CppGraphConverter> createEgraph(
-        std::unordered_map<int, Operation*> *unsupportedOpsInGraph,
+        std::vector<Operation*> *blackboxIDToTensorInfo,
+	OpBuilder &builder,
         ModuleOp module) {
 
       auto graph = tensat::new_converter();
+      // members of the class
       std::unordered_map<Operation*, tensat::TensorInfo*> opToTensorInfo;
       std::unordered_map<int, tensat::TensorInfo*> blockArgToTensorInfo;
 
@@ -634,7 +672,7 @@ namespace {
         std::cout << "ENTERING AT: " << op->getName().getStringRef().str() << "\n";
         auto cost = OperationTimer::getCost(op, 100, 100);
         llvm::outs() << "Cost: " << cost << "\n\n";
-        dfs(op, &opToTensorInfo, &blockArgToTensorInfo, graph);
+        dfs(op, &opToTensorInfo, &blockArgToTensorInfo, blackboxIDToTensorInfo, builder, graph);
       });
 
       graph->print_rec_expr();
@@ -679,10 +717,8 @@ namespace {
       auto newType = RankedTensorType::get(shape, elementType);
     }
 
-    void reconstructStablehlo(ModuleOp *root, rust::vec<tensat::Node> &nodes) {
+    void reconstructStablehlo(ModuleOp *root, std::vector<Operation*> *blackboxIDToTensorInfo, rust::vec<tensat::Node> &nodes, OpBuilder &builder) {
       auto context = root->getContext();
-      OpBuilder builder(context);
-
       std::vector<Value> opVals;
 
       // Find funcOp to get the block.
@@ -719,7 +755,9 @@ namespace {
         } else if (node.name == "MulOp") {
           newOp = createBinaryOp<stablehlo::MulOp>(builder, opVals, node);
         } else if (node.name == "DivOp") {
+          std::cout << "REACHED" << "\n";
           newOp = createBinaryOp<stablehlo::DivOp>(builder, opVals, node);
+	  std::cout << "REACHED after" << "\n";
         } else if (node.name == "MinOp") {
           newOp = createBinaryOp<stablehlo::MinOp>(builder, opVals, node);
         } else if (node.name == "MaxOp") {
@@ -739,7 +777,6 @@ namespace {
           // TODO: Untested
           auto input = opVals[node.operands[0]];
           auto shape = parseUnderscore(nodes[node.operands[1]].label);
-
           auto newType = deriveOutputType(input, shape);
           newOp = builder.create<stablehlo::ReshapeOp>(location, newType, input);
         } else if (node.name == "DotGeneralOp") {
@@ -771,8 +808,23 @@ namespace {
 
           // TODO: Is lhs correct here?
           auto newType = deriveOutputType(lhs, shape);
-
           newOp = builder.create<stablehlo::DotGeneralOp>(location, newType, lhs, rhs, dotDimensionNumbersAttr, mlir::ArrayAttr::get(context, llvm::ArrayRef(precisionVec)));
+        } else if (node.name == "blackbox_1") {
+          root->dump();
+	  auto operand = opVals[node.operands[0]];
+	  // Really subtle error arose here from not handling Num properly.
+	  // We might want to have a num hashmap 
+	  auto blackboxID = nodes[node.operands[1]].operands[0];
+	  std::cout << "blackboxID " << blackboxID << "\n";
+	  Operation* newOp = blackboxIDToTensorInfo->at(blackboxID);
+	  std::cout << "opName " << newOp->getName().getStringRef().str() << "\n";
+	  newOp->setOperand(0, operand);
+	  std::cout << "set operand successfully" << "\n";
+	  // Do we need to account for insertion points at all?
+	  builder.insert(newOp);
+          block.push_back(newOp);
+	  std::cout << "pushed to block" << "\n";
+	  continue;
         } else {
           // TODO: implement other operations
           std::cout << node.name << "\n";
@@ -798,10 +850,12 @@ namespace {
 
     void runOnOperation() override {
       ModuleOp module = getOperation();
-      std::unordered_map<int, Operation*> unsupportedOpsInGraph;
-
-      auto graph = createEgraph(&unsupportedOpsInGraph, module);
-      
+      std::cout << "ORIGINAL MODULE" << "\n";
+      module.dump();
+      std::vector<Operation*> blackboxIDToTensorInfo;
+      auto context = module->getContext();
+      OpBuilder builder(context);
+      auto graph = createEgraph(&blackboxIDToTensorInfo, builder, module);
       auto optimized = graph->optimize();
 
       // TODO: Just for testing, remove later
@@ -814,7 +868,7 @@ namespace {
       }
 
       std::cout << "reconstructing\n";
-      reconstructStablehlo(&module, optimized);
+      reconstructStablehlo(&module, &blackboxIDToTensorInfo, optimized, builder);
       module.dump();
     }
   };
