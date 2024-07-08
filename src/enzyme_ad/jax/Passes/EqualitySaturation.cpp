@@ -636,17 +636,24 @@ namespace {
         } else {
           std::cout << "EqualitySaturationPass: result of stablehlo::DotGeneralOp has non-tensor type" << std::endl;
         }
-      } else if (isa<stablehlo::ConvertOp>(op)) {
-        auto convert = cast<stablehlo::ConvertOp>(op);
-        // auto copy = OperationTimer::cloneOpInContext(builder, op);
+      } else {
+        int numOperands = op->getNumOperands();
         auto copy = op->clone();
         blackboxIDToTensorInfo->push_back(copy);
-        tensorInfo = graph->new_blackbox_1_op(
-          *handleEnodeOperandPartial(convert.getOperand()),
-          blackboxIDToTensorInfo->size()-1
-        ).into_raw();
-      }
 
+        if (numOperands == 1) {
+          tensorInfo = graph->new_blackbox_1_op(
+            *handleEnodeOperandPartial(op->getOperand(0)),
+            blackboxIDToTensorInfo->size()-1
+          ).into_raw();
+        } /*else if (numOperands == 2) {
+          tensorInfo = graph->new_blackbox_2_op(
+            *handleEnodeOperandPartial(convert.getOperand(0)),
+            *handleEnodeOperandPartial(convert.getOperand(1)),
+            blackboxIDToTensorInfo->size()-1
+          ).into_raw();
+        }*/
+      }
       if (tensorInfo != nullptr) {
         opToTensorInfo->insert({op, tensorInfo});
         return tensorInfo;
