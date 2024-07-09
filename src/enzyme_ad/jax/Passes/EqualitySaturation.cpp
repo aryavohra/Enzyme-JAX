@@ -149,6 +149,11 @@ public:
     return builder.create(zeroState);
   }
 
+  static Operation *cloneOpInContext(OpBuilder &builder, Operation *op) {
+    IRMapping mapping;
+    return cloneOpInContext(builder, op, mapping);
+  }
+
 private:
   static llvm::DenseMap<Operation*, uint64_t, OperationMapInfo> runtimeCache;
 
@@ -212,11 +217,6 @@ private:
     }
 
     return newOp;
-  }
-
-  static Operation *cloneOpInContext(OpBuilder &builder, Operation *op) {
-    IRMapping mapping;
-    return cloneOpInContext(builder, op, mapping);
   }
 
   /**
@@ -638,21 +638,20 @@ namespace {
         }
       } else {
         int numOperands = op->getNumOperands();
-        auto copy = op->clone();
+        std::vector<tensat::TensorInfo*> processedOperands;
+        auto copy = OperationTimer::cloneOpInContext(builder, op);
+        // auto copy = op->clone();
         blackboxIDToTensorInfo->push_back(copy);
-
-        if (numOperands == 1) {
-          tensorInfo = graph->new_blackbox_1_op(
-            *handleEnodeOperandPartial(op->getOperand(0)),
-            blackboxIDToTensorInfo->size()-1
-          ).into_raw();
-        } /*else if (numOperands == 2) {
-          tensorInfo = graph->new_blackbox_2_op(
-            *handleEnodeOperandPartial(convert.getOperand(0)),
-            *handleEnodeOperandPartial(convert.getOperand(1)),
-            blackboxIDToTensorInfo->size()-1
-          ).into_raw();
-        }*/
+        int blackboxOpID = blackboxIDToTensorInfo->size()-1;
+        for (size_t i = 0; i < numOperands; i++) {
+          auto operand = handleEnodeOperandPartial(op->getOperand(i));
+          processedOperands.push_back(operand);
+        }
+        auto operandPtrsSlice = rust::Slice<tensat::TensorInfo* const>{processedOperands.data(), static_cast<size_t>(processedOperands.size())};
+        tensorInfo = graph->new_blackbox_op(
+          operandPtrsSlice,
+          blackboxOpID
+        ).into_raw();
       }
       if (tensorInfo != nullptr) {
         opToTensorInfo->insert({op, tensorInfo});
@@ -812,20 +811,25 @@ namespace {
           // TODO: Is lhs correct here?
           auto newType = deriveOutputType(lhs, shape);
           newOp = builder.create<stablehlo::DotGeneralOp>(location, newType, lhs, rhs, dotDimensionNumbersAttr, mlir::ArrayAttr::get(context, llvm::ArrayRef(precisionVec)));
-        } else if (node.name == "blackbox_1") {
-          root->dump();
-          auto operand = opVals[node.operands[0]];
-          // Really subtle error arose here from not handling Num properly.
-          // We might want to have a num hashmap 
-          auto blackboxID = nodes[node.operands[1]].operands[0];
-          std::cout << "blackboxID " << blackboxID << "\n";
+        } else if (node.name == "blackbox") {
+	  size_t numOperands = node.operands.size() - 1;
+          auto blackboxID = nodes[node.operands[numOperands]].operands[0];
           Operation* newOp = blackboxIDToTensorInfo->at(blackboxID);
-          std::cout << "opName " << newOp->getName().getStringRef().str() << "\n";
-          newOp->setOperand(0, operand);
-          std::cout << "set operand successfully" << "\n";
+	  
+          // Really subtle error arose here from not handling Num properly.
+          // We might want to have a Num hashmap 
+          for (size_t i = 0; i < numOperands; ++i) {
+            auto operandIndex = node.operands[i];
+            auto operand = opVals[operandIndex];
+            newOp->setOperand(i, operand);
+          }
+	  
           // Do we need to account for insertion points at all?
           builder.insert(newOp);
+	  
+	  // TODO: why does everything break when we comment these four lines below?
           block.push_back(newOp);
+          opVals.push_back(newOp->getResult(0));
           std::cout << "pushed to block" << "\n";
           continue;
         } else {
@@ -872,6 +876,7 @@ namespace {
 
       std::cout << "reconstructing\n";
       reconstructStablehlo(&module, &blackboxIDToTensorInfo, optimized, builder);
+      std::cout << "SUPEROPTIMIZED MODULE" << "\n";
       module.dump();
     }
   };
