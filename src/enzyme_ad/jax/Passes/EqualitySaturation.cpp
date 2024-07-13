@@ -694,15 +694,13 @@ namespace {
     }
 
     /**
-     * Parse the underscore-separated sequence strings (e.g 128_128_128) emitted by tensat node construction.
-    */
-    llvm::ArrayRef<int64_t> parseUnderscore(rust::string &seq) {
+     * Parse the Vec nodes (e.g Vec(Num(128), Num(128))) emitted by tensat node construction.
+     */
+    llvm::ArrayRef<int64_t> parseVec(tensat::Node &seq) {
       std::vector<int64_t> result;
-      std::stringstream ss(static_cast<std::string>(seq));
-      std::string seg;
-
-      while (std::getline(ss, seg, '_')) {
-        result.push_back(std::stoll(seg));
+      
+      for (auto i : seq.operands) {
+        result.push_back(i);
       }
 
       return llvm::ArrayRef(result);
@@ -773,12 +771,12 @@ namespace {
           // TODO: Can this be done cleaner, getting the Value earlier from Var instead of accessing now?
           //  Can't be certain until we've implemented many ops using Var.
           // TODO: Untested
-          auto permutation = parseUnderscore(nodes[node.operands[1]].label);
+          auto permutation = parseVec(nodes[node.operands[1]]);
           newOp = builder.create<stablehlo::TransposeOp>(location, input, permutation);
         } else if (node.name == "ReshapeOp") {
           // TODO: Untested
           auto input = opVals[node.operands[0]];
-          auto shape = parseUnderscore(nodes[node.operands[1]].label);
+          auto shape = parseVec(nodes[node.operands[1]]);
           auto newType = deriveOutputType(input, shape);
           newOp = builder.create<stablehlo::ReshapeOp>(location, newType, input);
         } else if (node.name == "DotGeneralOp") {
@@ -786,12 +784,12 @@ namespace {
           auto lhs = opVals[node.operands[0]];
           auto rhs = opVals[node.operands[1]];
 
-          auto lhsBatchDim = parseUnderscore(nodes[node.operands[2]].label);
-          auto rhsBatchDim = parseUnderscore(nodes[node.operands[3]].label);
-          auto lhsContractDim = parseUnderscore(nodes[node.operands[4]].label);
-          auto rhsContractDim = parseUnderscore(nodes[node.operands[5]].label);
-          auto precisionConfig = parseUnderscore(nodes[node.operands[6]].label);
-          auto shape = parseUnderscore(nodes[node.operands[7]].label);
+          auto lhsBatchDim = parseVec(nodes[node.operands[2]]);
+          auto rhsBatchDim = parseVec(nodes[node.operands[3]]);
+          auto lhsContractDim = parseVec(nodes[node.operands[4]]);
+          auto rhsContractDim = parseVec(nodes[node.operands[5]]);
+          auto precisionConfig = parseVec(nodes[node.operands[6]]);
+          auto shape = parseVec(nodes[node.operands[7]]);
 
           auto dotDimensionNumbersAttr = stablehlo::DotDimensionNumbersAttr::get(context, lhsBatchDim, rhsBatchDim, lhsContractDim, rhsContractDim);
           
