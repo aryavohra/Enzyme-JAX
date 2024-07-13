@@ -5,7 +5,7 @@ import jax.lax
 import enzyme_ad.jax as enzyme_jax
 
 def test(x, y):
-    return jnp.matmul(x, jnp.transpose(y))
+    return jnp.matmul(jnp.transpose(jnp.transpose(x)), jnp.transpose(y))
 
 class Simple(absltest.TestCase):
     def test_simple_random(self):
