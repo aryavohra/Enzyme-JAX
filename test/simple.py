@@ -13,8 +13,8 @@ class Simple(absltest.TestCase):
 
         efunc = enzyme_jax.enzyme_jax_ir(pipeline_options=enzyme_jax.JaXPipeline("equality-saturation-pass"),)(test)
         
-        a = jnp.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
-        b = jnp.array([[6.0, 5.0, 4.0], [3.0, 2.0, 1.0]])
+        a = jnp.array([[1.0, 2.0, 3.0, 0.0], [4.0, 5.0, 6.0, 0.0]])
+        b = jnp.array([[6.0, 5.0, 4.0, 0.0], [3.0, 2.0, 1.0, 0.0]])
         
         eres = efunc(a, b)
         print("enzyme forward", eres)
