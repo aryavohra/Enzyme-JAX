@@ -436,13 +436,6 @@ namespace {
       return dims;
     }
 
-    rust::Slice<const int32_t> castArrayRefToInt32Slice(llvm::ArrayRef<int64_t> input) {
-      auto input_vec = castArrayRefToInt32(input);
-      auto input_slice = rust::Slice<const int32_t>{
-        input_vec.data(), static_cast<size_t>(input_vec.size())};
-      return input_slice;
-    }
-
     tensat::TensorInfo* handleEnodeOperand(
         Value operand,
         std::unordered_map<Operation*, tensat::TensorInfo*> *opToTensorInfo,
@@ -593,10 +586,11 @@ namespace {
         // we might need more guards here
         auto dot_general = cast<stablehlo::DotGeneralOp>(op);
         auto dot_dim_attrs = dot_general.getDotDimensionNumbersAttr();
-        auto lhs_batch_dim = castArrayRefToInt32Slice(dot_dim_attrs.getLhsBatchingDimensions());
-        auto rhs_batch_dim = castArrayRefToInt32Slice(dot_dim_attrs.getRhsBatchingDimensions());
-        auto lhs_contracting_dim = castArrayRefToInt32Slice(dot_dim_attrs.getLhsContractingDimensions());
-        auto rhs_contracting_dim = castArrayRefToInt32Slice(dot_dim_attrs.getRhsContractingDimensions());
+        auto lhs_batch_dim = castArrayRefToInt32(dot_dim_attrs.getLhsBatchingDimensions());
+        auto rhs_batch_dim = castArrayRefToInt32(dot_dim_attrs.getRhsBatchingDimensions());
+        auto lhs_contract_dim = castArrayRefToInt32(dot_dim_attrs.getLhsContractingDimensions());
+        auto rhs_contract_dim = castArrayRefToInt32(dot_dim_attrs.getRhsContractingDimensions());
+       
         mlir::ArrayAttr precision = dot_general.getPrecisionConfig().value_or(mlir::ArrayAttr());
         std::vector<int> precision_configs;
         for (int i = 0; i < precision.size(); i++) {
@@ -626,10 +620,10 @@ namespace {
           tensorInfo = graph->new_dot_general_op(
             *handleEnodeOperandPartial(dot_general.getLhs()),
             *handleEnodeOperandPartial(dot_general.getRhs()),
-            lhs_batch_dim,
-            rhs_batch_dim,
-            lhs_contracting_dim,
-            rhs_contracting_dim,
+            {lhs_batch_dim.data(), lhs_batch_dim.size()},
+            {rhs_batch_dim.data(), rhs_batch_dim.size()},
+            {lhs_contract_dim.data(), lhs_contract_dim.size()},
+            {rhs_contract_dim.data(), rhs_contract_dim.size()},
             precision_config_slice,
             output_shape_slice
           ).into_raw();
@@ -696,25 +690,25 @@ namespace {
     /**
      * Parse the Vec nodes (e.g Vec(Num(128), Num(128))) emitted by tensat node construction.
      */
-    llvm::ArrayRef<int64_t> parseVec(rust::vec<tensat::Node> &nodes, tensat::Node &seq) {
+    std::vector<int64_t> parseVec(rust::vec<tensat::Node> &nodes, tensat::Node &seq) {
       std::vector<int64_t> result;
       
       for (auto i : seq.operands) {
         result.push_back(nodes[i].operands[0]);
       }
 
-      return llvm::ArrayRef(result);
+      return result;
     }
 
     /**
      * Create a new mlir::Type based on the element type of an existing mlir::Type and the provided shape.
     */
-
     mlir::Type deriveOutputType(mlir::Value &input, llvm::ArrayRef<int64_t> shape) {
       auto inputType = input.getType();
       assert(isa<TensorType>(inputType));
       auto elementType = inputType.cast<TensorType>().getElementType();
       auto newType = RankedTensorType::get(shape, elementType);
+      return newType;
     }
 
     void reconstructStablehlo(ModuleOp *root, std::vector<Operation*> *blackboxIDToTensorInfo, rust::vec<tensat::Node> &nodes, OpBuilder &builder) {
@@ -755,9 +749,7 @@ namespace {
         } else if (node.name == "MulOp") {
           newOp = createBinaryOp<stablehlo::MulOp>(builder, opVals, node);
         } else if (node.name == "DivOp") {
-          std::cout << "REACHED" << "\n";
           newOp = createBinaryOp<stablehlo::DivOp>(builder, opVals, node);
-	  std::cout << "REACHED after" << "\n";
         } else if (node.name == "MinOp") {
           newOp = createBinaryOp<stablehlo::MinOp>(builder, opVals, node);
         } else if (node.name == "MaxOp") {
@@ -805,12 +797,10 @@ namespace {
                 precisionVec.push_back(stablehlo::PrecisionAttr::get(context, stablehlo::Precision::HIGHEST)); break;
             }
           }
-
-          // TODO: Is lhs correct here?
           auto newType = deriveOutputType(lhs, shape);
           newOp = builder.create<stablehlo::DotGeneralOp>(location, newType, lhs, rhs, dotDimensionNumbersAttr, mlir::ArrayAttr::get(context, llvm::ArrayRef(precisionVec)));
         } else if (node.name == "blackbox") {
-	  size_t numOperands = node.operands.size() - 1;
+	        size_t numOperands = node.operands.size() - 1;
           auto blackboxID = nodes[node.operands[numOperands]].operands[0];
           Operation* newOp = blackboxIDToTensorInfo->at(blackboxID);
 	  
@@ -825,7 +815,7 @@ namespace {
           // Do we need to account for insertion points at all?
           builder.insert(newOp);
 	  
-	  // TODO: why does everything break when we comment these four lines below?
+	        // TODO: why does everything break when we comment these four lines below?
           block.push_back(newOp);
           opVals.push_back(newOp->getResult(0));
           std::cout << "pushed to block" << "\n";
@@ -862,15 +852,6 @@ namespace {
       OpBuilder builder(context);
       auto graph = createEgraph(&blackboxIDToTensorInfo, builder, module);
       auto optimized = graph->optimize();
-
-      // TODO: Just for testing, remove later
-      for (auto& node : optimized) {
-        std::cout << node.name << ' ';
-        for (auto& i : node.operands) {
-          std::cout << i << ' ';
-        }
-        std::cout << std::endl;
-      }
 
       std::cout << "reconstructing\n";
       reconstructStablehlo(&module, &blackboxIDToTensorInfo, optimized, builder);
