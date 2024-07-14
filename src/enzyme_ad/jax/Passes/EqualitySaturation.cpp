@@ -630,6 +630,17 @@ namespace {
         } else {
           std::cout << "EqualitySaturationPass: result of stablehlo::DotGeneralOp has non-tensor type" << std::endl;
         }
+      } else if (isa<stablehlo::ConcatenateOp>(op)) {
+        auto concat = cast<stablehlo::ConcatenateOp>(op);
+        std::vector<tensat::TensorInfo*> inputs;
+        for (auto input : concat.getInputs()) {
+          inputs.push_back(handleEnodeOperandPartial(input));
+        }
+        int32_t dimension = concat.getDimension();
+        tensorInfo = graph->new_concatenate_op(
+          { inputs.data(), inputs.size() },
+          dimension
+        ).into_raw();
       } else {
         int numOperands = op->getNumOperands();
         std::vector<tensat::TensorInfo*> processedOperands;
@@ -688,15 +699,28 @@ namespace {
     }
 
     /**
-     * Parse the Vec nodes (e.g Vec(Num(128), Num(128))) emitted by tensat node construction.
+     * Parse the Vec nodes with Nums (e.g Vec(Num(128), Num(128))) emitted by tensat node construction.
      */
-    std::vector<int64_t> parseVec(rust::vec<tensat::Node> &nodes, tensat::Node &seq) {
+    std::vector<int64_t> parseNumVec(rust::vec<tensat::Node> &nodes, tensat::Node &seq) {
       std::vector<int64_t> result;
       
       for (auto i : seq.operands) {
         result.push_back(nodes[i].operands[0]);
       }
 
+      return result;
+    }
+
+    /**
+     * Parse the Vec nodes with arbitrary operations (e.g Vec(Input(...), AddOp(...))) emitted by tensat node construction.
+     */
+    std::vector<Value> parseOpVec(std::vector<Value> &opVals, tensat::Node &seq) {
+      std::vector<Value> result;
+
+      for (auto i : seq.operands) {
+        result.push_back(opVals[i]);
+      }
+      
       return result;
     }
 
@@ -760,28 +784,24 @@ namespace {
           continue;
         } else if (node.name == "TransposeOp") {
           auto input = opVals[node.operands[0]];
-          // TODO: Can this be done cleaner, getting the Value earlier from Var instead of accessing now?
-          //  Can't be certain until we've implemented many ops using Var.
-          // TODO: Untested
-          auto permutation = parseVec(nodes, nodes[node.operands[1]]);
+          auto permutation = parseNumVec(nodes, nodes[node.operands[1]]);
           newOp = builder.create<stablehlo::TransposeOp>(location, input, permutation);
         } else if (node.name == "ReshapeOp") {
           // TODO: Untested
           auto input = opVals[node.operands[0]];
-          auto shape = parseVec(nodes, nodes[node.operands[1]]);
+          auto shape = parseNumVec(nodes, nodes[node.operands[1]]);
           auto newType = deriveOutputType(input, shape);
           newOp = builder.create<stablehlo::ReshapeOp>(location, newType, input);
         } else if (node.name == "DotGeneralOp") {
-          // TODO: Untested
           auto lhs = opVals[node.operands[0]];
           auto rhs = opVals[node.operands[1]];
 
-          auto lhsBatchDim = parseVec(nodes, nodes[node.operands[2]]);
-          auto rhsBatchDim = parseVec(nodes, nodes[node.operands[3]]);
-          auto lhsContractDim = parseVec(nodes, nodes[node.operands[4]]);
-          auto rhsContractDim = parseVec(nodes, nodes[node.operands[5]]);
-          auto precisionConfig = parseVec(nodes, nodes[node.operands[6]]);
-          auto shape = parseVec(nodes, nodes[node.operands[7]]);
+          auto lhsBatchDim = parseNumVec(nodes, nodes[node.operands[2]]);
+          auto rhsBatchDim = parseNumVec(nodes, nodes[node.operands[3]]);
+          auto lhsContractDim = parseNumVec(nodes, nodes[node.operands[4]]);
+          auto rhsContractDim = parseNumVec(nodes, nodes[node.operands[5]]);
+          auto precisionConfig = parseNumVec(nodes, nodes[node.operands[6]]);
+          auto shape = parseNumVec(nodes, nodes[node.operands[7]]);
 
           auto dotDimensionNumbersAttr = stablehlo::DotDimensionNumbersAttr::get(context, lhsBatchDim, rhsBatchDim, lhsContractDim, rhsContractDim);
           
@@ -799,6 +819,10 @@ namespace {
           }
           auto newType = deriveOutputType(lhs, shape);
           newOp = builder.create<stablehlo::DotGeneralOp>(location, newType, lhs, rhs, dotDimensionNumbersAttr, mlir::ArrayAttr::get(context, llvm::ArrayRef(precisionVec)));
+        } else if (node.name == "ConcatenateOp") {
+          auto inputs = parseOpVec(opVals, nodes[node.operands[0]]);
+          int32_t dimension = nodes[node.operands[1]].operands[0];
+          newOp = builder.create<stablehlo::ConcatenateOp>(location, inputs, dimension);
         } else if (node.name == "blackbox") {
 	        size_t numOperands = node.operands.size() - 1;
           auto blackboxID = nodes[node.operands[numOperands]].operands[0];
