@@ -641,6 +641,18 @@ namespace {
           { inputs.data(), inputs.size() },
           dimension
         ).into_raw();
+      } else if (isa<stablehlo::SliceOp>(op)) {
+        auto slice = cast<stablehlo::SliceOp>(op);
+        auto operand = handleEnodeOperandPartial(slice.getOperand());
+        auto start_indices = castArrayRefToInt32(slice.getStartIndices());
+        auto limit_indices = castArrayRefToInt32(slice.getLimitIndices());
+        auto strides = castArrayRefToInt32(slice.getStrides());
+        tensorInfo = graph->new_slice_op(
+          *operand,
+          { start_indices.data(), start_indices.size() },
+          { limit_indices.data(), limit_indices.size() },
+          { strides.data(), strides.size() }
+        ).into_raw();
       } else {
         int numOperands = op->getNumOperands();
         std::vector<tensat::TensorInfo*> processedOperands;
@@ -657,7 +669,7 @@ namespace {
           operandPtrsSlice,
           blackboxOpID
         ).into_raw();
-      }
+      } 
       if (tensorInfo != nullptr) {
         opToTensorInfo->insert({op, tensorInfo});
         return tensorInfo;
@@ -821,8 +833,14 @@ namespace {
           newOp = builder.create<stablehlo::DotGeneralOp>(location, newType, lhs, rhs, dotDimensionNumbersAttr, mlir::ArrayAttr::get(context, llvm::ArrayRef(precisionVec)));
         } else if (node.name == "ConcatenateOp") {
           auto inputs = parseOpVec(opVals, nodes[node.operands[0]]);
-          int32_t dimension = nodes[node.operands[1]].operands[0];
+          auto dimension = nodes[node.operands[1]].operands[0];
           newOp = builder.create<stablehlo::ConcatenateOp>(location, inputs, dimension);
+        } else if (node.name == "SliceOp") {
+          auto operand = opVals[node.operands[0]];
+          auto startIndices = parseNumVec(nodes, nodes[node.operands[1]]);
+          auto limitIndices = parseNumVec(nodes, nodes[node.operands[2]]);
+          auto strides = parseNumVec(nodes, nodes[node.operands[3]]);
+          newOp = builder.create<stablehlo::SliceOp>(location, operand, startIndices, limitIndices, strides);
         } else if (node.name == "blackbox") {
 	        size_t numOperands = node.operands.size() - 1;
           auto blackboxID = nodes[node.operands[numOperands]].operands[0];

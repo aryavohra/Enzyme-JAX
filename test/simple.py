@@ -5,7 +5,7 @@ import jax.lax
 import enzyme_ad.jax as enzyme_jax
 
 def test(x, y):
-    return jnp.concatenate([x, y])
+    return x[0:1, 2:3]
 
 class Simple(absltest.TestCase):
     def test_simple_random(self):
