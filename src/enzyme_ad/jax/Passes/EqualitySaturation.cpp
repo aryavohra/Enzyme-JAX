@@ -504,7 +504,7 @@ namespace {
       std::vector<Operation*> *blackboxIDToTensorInfo,
       OpBuilder &builder,
       Box<tensat::CppGraphConverter> &graph) {
-      std::cout << "DFS AT " << op->getName().getStringRef().str() << "\n";
+      // std::cout << "DFS AT " << op->getName().getStringRef().str() << "\n";
 
       if (opToTensorInfo->find(op) != opToTensorInfo->end()) {
         return opToTensorInfo->at(op);
