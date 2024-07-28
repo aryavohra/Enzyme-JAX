@@ -347,7 +347,7 @@ mlir::Type tensat::CostModel::tensatTypeToMlirType(OpBuilder& builder, tensat::T
     case tensat::Type::f32:
       return builder.getF32Type();
     default:
-      return nullptr; // TODO: Probably not the best practice?
+      assert(false);
   }
 }
 
@@ -476,13 +476,13 @@ namespace {
             << "EqualitySaturationPass does not support this argument type!"
             << "\n";
           operand.getType().dump();
-          return nullptr;
+          assert(false);
         }
       }
       std::cout
         << "EqualitySaturationPass: encountered operand that is neither the result of an Op nor a BlockArgument."
         << "\n";
-      return nullptr;
+      assert(false);
     }
 
 // // Handle integral types, simply return the operand as-is
@@ -818,12 +818,12 @@ std::unique_ptr<rust::Slice<int>> handleOperand(
     /**
      * Create a new mlir::Type based on the element type of an existing mlir::Type and the provided shape.
     */
-
     mlir::Type deriveOutputType(mlir::Value &input, llvm::ArrayRef<int64_t> shape) {
       auto inputType = input.getType();
       assert(isa<TensorType>(inputType));
       auto elementType = inputType.cast<TensorType>().getElementType();
       auto newType = RankedTensorType::get(shape, elementType);
+      return newType;
     }
 
     void reconstructStablehlo(ModuleOp *root, std::vector<Operation*> *blackboxIDToTensorInfo, rust::vec<tensat::Node> &nodes, OpBuilder &builder) {
