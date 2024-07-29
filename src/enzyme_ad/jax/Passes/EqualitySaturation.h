@@ -16,9 +16,12 @@ class CostModel {
 public:
   // TODO: Our operands should be tuples of (shape, type).
   // SHOULD TensorData have a type field too?
-  uint64_t getBinOpCost(Ops op, rust::Slice<const int64_t> lhsDims,
-                        Type lhsType, rust::Slice<const int64_t> rhsDims,
-                        tensat::Type rhsType) const;
+  uint64_t get_cost(
+    Ops op,
+    rust::Slice<const rust::Slice<const int64_t>> operand_dims,
+    rust::Slice<const Type> operand_types,
+    rust::Slice<const rust::Slice<const int64_t>> other_vector_args,
+    rust::Slice<const int64_t> int_args) const;
 
   static mlir::Type newTensorType(mlir::OpBuilder &builder,
                            rust::Slice<const int64_t> dims,
