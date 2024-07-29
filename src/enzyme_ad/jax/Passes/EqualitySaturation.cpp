@@ -365,7 +365,7 @@ std::vector<int32_t> castArrayRefToInt32(llvm::ArrayRef<int64_t> shape) {
   return dims;
 }
 
-rust::Vec<int> tensat::ShapeInference::get_shape(
+rust::Vec<tensat::Shape> tensat::ShapeInference::get_shape(
     Ops op,
     rust::Slice<const rust::Slice<const int64_t>> operand_dims,
     rust::Slice<const tensat::Type> operand_types,
@@ -407,13 +407,18 @@ rust::Vec<int> tensat::ShapeInference::get_shape(
       return {};
   }
 
-  auto output_tensor = mlirOp->getResult(0).getType().cast<TensorType>();
-  auto shape_array = castArrayRefToInt32(output_tensor.getShape());
+  rust::Vec<tensat::Shape> shapes;
+  
+  for (auto res : mlirOp->getResults()) {
+    auto output_tensor = res.getType().cast<TensorType>();
+    auto shape_array = castArrayRefToInt32(output_tensor.getShape());
+    rust::Vec<int> rusty_shape;
 
-  rust::Vec<int> rusty_shape;
+    for (const auto& dim : shape_array)
+      rusty_shape.push_back(dim);
 
-  for (const auto& dim : shape_array)
-    rusty_shape.push_back(dim);
+    shapes.push_back({rusty_shape});
+  }
 
   // Print the shape as a string with underscores
   // std::ostringstream shape_str;
@@ -423,7 +428,7 @@ rust::Vec<int> tensat::ShapeInference::get_shape(
   //   shape_string.pop_back();
   // }
   mlirOp->erase();
-  return rusty_shape;
+  return shapes;
 }
 
 std::unique_ptr<tensat::ShapeInference> tensat::newShapeInference() {
@@ -730,9 +735,14 @@ std::unique_ptr<rust::Slice<int>> handleOperand(
         ).into_raw();
       } else {
         int numOperands = op->getNumOperands();
+        std::vector<rust::Slice<const int>> shapes_vec;
+        for (auto result : op->getResults()) {
+          auto output_tensor = result.getType().cast<TensorType>();
+          auto shape_array = castArrayRefToInt32(output_tensor.getShape());
+          shapes_vec.push_back({shape_array.data(), shape_array.size()});
+        }
+        rust::Slice<const rust::Slice<const int>> shapes = {shapes_vec.data(), shapes_vec.size()};
         auto output_tensor = op->getResult(0).getType().cast<TensorType>();
-        auto shape_array = castArrayRefToInt32(output_tensor.getShape());
-	auto shape = rust::Slice<const int>{ shape_array.data(), shape_array.size() };
         std::vector<tensat::TensorInfo*> processedOperands;
         auto copy = OperationTimer::cloneOpInContext(builder, op);
         // auto copy = op->clone();
@@ -746,7 +756,7 @@ std::unique_ptr<rust::Slice<int>> handleOperand(
         tensorInfo = graph->new_blackbox_op(
           operandPtrsSlice,
           blackboxOpID,
-          shape
+          shapes
         ).into_raw();
       }
       if (tensorInfo != nullptr) {

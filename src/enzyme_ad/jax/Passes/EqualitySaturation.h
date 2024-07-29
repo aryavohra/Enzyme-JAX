@@ -8,6 +8,7 @@
 namespace tensat {
 enum class Type : uint8_t;
 enum class Ops : uint8_t;
+struct Shape;
 
 /**
  * Functions exposed to Rust (Tensat) for getting the cost of new operations.
@@ -30,7 +31,7 @@ public:
 class ShapeInference {
 public:
 
-  rust::Vec<int> get_shape(
+  rust::Vec<Shape> get_shape(
     Ops op,
     rust::Slice<const rust::Slice<const int64_t>> operand_dims,
     rust::Slice<const Type> operand_types,
