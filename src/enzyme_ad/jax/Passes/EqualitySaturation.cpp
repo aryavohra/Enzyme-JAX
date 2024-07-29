@@ -105,10 +105,7 @@ public:
     RegisterDialects(wrap(&context));
 
     ModuleOp wrapperModule = createModuleFromOperation(context, op);
-    std::cout << "Created module from operation" << "\n";
-
     auto executable = prepareExecutable(wrapperModule, op);
-    std::cout << "Created executable from operation" << "\n";
 
     unsigned numResults = op->getNumResults();
     xla::PjRtBuffer* res[numResults];
@@ -122,27 +119,22 @@ public:
     }
 
     assert(!futures);
-    std::cout << "RAN" << "\n";
 
     auto t2 = std::chrono::high_resolution_clock::now();
 
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
-    std::cout << "DURATION " << duration << "\n";
 
     // Cleanup
     for (int i = 0; i < numResults; i++) {
       PjRtBufferFree(res[i]);
     }
-    std::cout << "FREED operation" << "\n";
 
     FreeClient(executable->client());
     ExecutableFree(executable);
-    std::cout << "CLIENT FREED" << "\n";
 
     wrapperModule.erase();
-    std::cout << "WRAPPER MODULE ERASED" << "\n";
 
-    std::cout << op->getName().getStringRef().str() << "\n";
+    // std::cout << op->getName().getStringRef().str() << "\n";
     // runtimeCache.try_emplace(op, duration);
     return duration;
   }
@@ -422,12 +414,8 @@ uint64_t tensat::CostModel::get_cost(
   }
 
   if (mlirOp) {
-    std::cout << "ENTERED MLIROP CONDITION BRANCH" << "\n";
     auto cost = OperationTimer::getCost(mlirOp, 100, 100);
-    std::cout << "EXITING MLIROP CONDITION BRANCH" << "\n";
-    // TRYING TO SEE IF THIS FIXES THE SEGFAULT
     mlirOp->erase();
-    std::cout << "MLIROP ERASED" << "\n";
     return cost;
   }
   return 100000;  
@@ -612,8 +600,16 @@ namespace {
       return input_slice;
     }
 
+    int getValueIndex(Operation* definingOp, Value &value) {
+      auto results = definingOp->getResults();
+      for (int i = 0; i < results.size(); i++) {
+        if (results[i] == value) return i;
+      }
+      return -1;
+    }
+
     tensat::TensorInfo* handleOperand(
-        Value operand,
+        Value &operand,
         std::unordered_map<Operation*, tensat::TensorInfo*> *opToTensorInfo,
         std::unordered_map<int, tensat::TensorInfo*> *blockArgToTensorInfo,
         std::vector<Operation*> *blackboxIDToTensorInfo,
@@ -621,7 +617,16 @@ namespace {
         Box<tensat::CppGraphConverter> &graph) {
       if (auto defOp = operand.getDefiningOp()) {
         // Use existing TensorInfo if already processed
-        return dfs(defOp, opToTensorInfo, blockArgToTensorInfo, blackboxIDToTensorInfo, builder, graph);
+        int index = getValueIndex(defOp, operand);
+        assert(index >= 0);
+        auto convertedOperand = dfs(defOp, opToTensorInfo, blockArgToTensorInfo, blackboxIDToTensorInfo, builder, graph);
+        if (index == 0) {
+          return convertedOperand;
+        } else {
+          auto indexOperand = graph->new_index(index, *convertedOperand).into_raw();
+          opToTensorInfo->insert({defOp, indexOperand});
+          return indexOperand;
+        }
       } else if (auto arg = operand.dyn_cast<BlockArgument>()) {
         // Handle BlockArguments which represent function parameters
         if (isa<TensorType>(operand.getType())) {
@@ -701,7 +706,7 @@ std::unique_ptr<rust::Slice<int>> handleOperand(
       std::vector<Operation*> *blackboxIDToTensorInfo,
       OpBuilder &builder,
       Box<tensat::CppGraphConverter> &graph) {
-      std::cout << "DFS AT " << op->getName().getStringRef().str() << "\n";
+      // std::cout << "DFS AT " << op->getName().getStringRef().str() << "\n";
 
       if (opToTensorInfo->find(op) != opToTensorInfo->end()) {
         return opToTensorInfo->at(op);
@@ -1011,7 +1016,17 @@ std::unique_ptr<rust::Slice<int>> handleOperand(
         Operation* newOp = nullptr;
 
         // Create the new operation based on the operands
-        if (node.name == "NegOp") {
+        if (node.name == "Var" || node.name == "Num") {
+          /* do nothing */
+        } else if (node.name == "Input") {
+          int blockArgNumber = nodes[node.operands[1]].operands[0];
+          opVals.push_back(block.getArgument(blockArgNumber));
+          continue;
+        } else if (node.name == "Index") {
+          int index = nodes[node.operands[1]].operands[0];
+          opVals.push_back(opVals[index].getDefiningOp()->getResult(index));
+          continue;
+        } else if (node.name == "NegOp") {
           newOp = createUnaryOp<stablehlo::NegOp>(builder, opVals, node);
         } else if (node.name == "TanhOp") {
           newOp = createUnaryOp<stablehlo::TanhOp>(builder, opVals, node);
@@ -1024,17 +1039,11 @@ std::unique_ptr<rust::Slice<int>> handleOperand(
         } else if (node.name == "MulOp") {
           newOp = createBinaryOp<stablehlo::MulOp>(builder, opVals, node);
         } else if (node.name == "DivOp") {
-          std::cout << "REACHED" << "\n";
           newOp = createBinaryOp<stablehlo::DivOp>(builder, opVals, node);
-    std::cout << "REACHED after" << "\n";
         } else if (node.name == "MinOp") {
           newOp = createBinaryOp<stablehlo::MinOp>(builder, opVals, node);
         } else if (node.name == "MaxOp") {
           newOp = createBinaryOp<stablehlo::MaxOp>(builder, opVals, node);
-        } else if (node.name == "Input") {
-          int blockArgNumber = nodes[node.operands[1]].operands[0];
-          opVals.push_back(block.getArgument(blockArgNumber));
-          continue;
         } else if (node.name == "TransposeOp") {
           auto input = opVals[node.operands[0]];
           // TODO: Can this be done cleaner, getting the Value earlier from Var instead of accessing now?
@@ -1104,14 +1113,14 @@ std::unique_ptr<rust::Slice<int>> handleOperand(
           // Do we need to account for insertion points at all?
           builder.insert(newOp);
     
-    // TODO: why does everything break when we comment these four lines below?
+          // TODO: why does everything break when we comment these four lines below?
           block.push_back(newOp);
           opVals.push_back(newOp->getResult(0));
           std::cout << "pushed to block" << "\n";
           continue;
         } else {
           // TODO: implement other operations
-          std::cout << node.name << "\n";
+          std::cout << "UNIMPLEMENTED " << node.name << "\n";
         }
 
         if (newOp) {
