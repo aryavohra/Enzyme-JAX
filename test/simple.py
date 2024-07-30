@@ -11,9 +11,7 @@ def test(x, y, z, w):
     numbers = (([1, 2], [0, 2]), ([0], [3]))
     res1 = jax.lax.dot_general(a, b, numbers)
     res2 = jax.lax.dot_general(x, y, numbers) + jax.lax.dot_general(z, w, numbers)
-    print("RES1", res1) 
-    print("RES2", res2)
-    return res1 == res2
+    return res1 - res2
 
 class Simple(absltest.TestCase):
     def test_simple_random(self):
