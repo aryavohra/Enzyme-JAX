@@ -5,13 +5,9 @@ import jax.lax
 import enzyme_ad.jax as enzyme_jax
 
 def test(x, y, z, w):
-    dims = len(jnp.shape(x))
-    a = jnp.concat([x, z], axis=2)
-    b = jnp.concat([y, w], axis=2)
-    numbers = (([1, 2], [0, 2]), ([0], [3]))
-    res1 = jax.lax.dot_general(a, b, numbers)
-    res2 = jax.lax.dot_general(x, y, numbers) + jax.lax.dot_general(z, w, numbers)
-    return res1 - res2
+    res1 = x @ y
+    res2 = z @ w
+    return res1 == res2
 
 class Simple(absltest.TestCase):
     def test_simple_random(self):

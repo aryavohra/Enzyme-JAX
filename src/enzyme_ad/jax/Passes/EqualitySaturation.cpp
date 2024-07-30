@@ -475,6 +475,14 @@ std::vector<int32_t> castArrayRefToInt32(llvm::ArrayRef<int64_t> shape) {
   return dims;
 }
 
+rust::Vec<int32_t> castArrayRefToRustVec(llvm::ArrayRef<int64_t> shape) {
+  rust::Vec<int32_t> dims;
+  for (int64_t dim : shape) {
+    dims.push_back(static_cast<int32_t>(dim));
+  }
+  return dims;
+}
+
 rust::Vec<tensat::Shape> tensat::ShapeInference::get_shape(
     Ops op,
     rust::Slice<const rust::Slice<const int64_t>> operand_dims,
@@ -510,11 +518,8 @@ rust::Vec<tensat::Shape> tensat::ShapeInference::get_shape(
     rust::Vec<tensat::Shape> shapes;
     for (auto res : mlirOp->getResults()) {
       auto output_tensor = res.getType().cast<TensorType>();
-      auto shape_array = castArrayRefToInt32(output_tensor.getShape());
-      rust::Vec<int> rusty_shape;
-      for (const auto& dim : shape_array)
-        rusty_shape.push_back(dim);
-      shapes.push_back({rusty_shape});
+      auto shape = castArrayRefToRustVec(output_tensor.getShape());
+      shapes.push_back({shape});
     }
     mlirOp->erase();
     return shapes;
@@ -533,14 +538,6 @@ namespace {
       StringRef getArgument() const override { return "equality-saturation-pass"; }
       StringRef getDescription() const override {
       return "Optimizes HLO graph using a Rust-based optimizer";
-    }
-
-
-    rust::Slice<const int32_t> castArrayRefToInt32Slice(llvm::ArrayRef<int64_t> input) {
-      auto input_vec = castArrayRefToInt32(input);
-      auto input_slice = rust::Slice<const int32_t>{
-        input_vec.data(), static_cast<size_t>(input_vec.size())};
-      return input_slice;
     }
 
     int getValueIndex(Operation* definingOp, Value &value) {
@@ -662,6 +659,7 @@ std::unique_ptr<rust::Slice<int>> handleOperand(
       //   return handleOperation(op, createOpFunc, opToTensorInfo, blockArgToTensorInfo, blackboxIDToTensorInfo, builder, graph, std::forward<decltype(operands)>(operands)...);
       // }; 
 
+      /*
       if (isa<stablehlo::ConstantOp>(op)) {
         auto constant = cast<stablehlo::ConstantOp>(op);
         auto output_tensor = constant->getResult(0).getType().cast<TensorType>();
@@ -669,7 +667,8 @@ std::unique_ptr<rust::Slice<int>> handleOperand(
 	auto shape = rust::Slice<const int>{ shape_array.data(), shape_array.size() };
 
         tensorInfo = graph->new_constant_op(shape).into_raw();
-      } else if (isa<stablehlo::MulOp>(op)) {
+      } */
+      if (isa<stablehlo::MulOp>(op)) {
         auto mul = cast<stablehlo::MulOp>(op);
         auto output_tensor = mul->getResult(0).getType().cast<TensorType>();
         auto shape_array = castArrayRefToInt32(output_tensor.getShape());
@@ -843,13 +842,12 @@ std::unique_ptr<rust::Slice<int>> handleOperand(
         ).into_raw();
       } else {
         int numOperands = op->getNumOperands();
-        std::vector<rust::Slice<const int>> shapes_vec;
+        rust::vec<tensat::Shape> shapes;
         for (auto result : op->getResults()) {
           auto output_tensor = result.getType().cast<TensorType>();
-          auto shape_array = castArrayRefToInt32(output_tensor.getShape());
-          shapes_vec.push_back({shape_array.data(), shape_array.size()});
+          auto shape_array = castArrayRefToRustVec(output_tensor.getShape());
+          shapes.push_back(tensat::Shape {shape_array});
         }
-        rust::Slice<const rust::Slice<const int>> shapes = {shapes_vec.data(), shapes_vec.size()};
         auto output_tensor = op->getResult(0).getType().cast<TensorType>();
         std::vector<tensat::TensorInfo*> processedOperands;
         auto copy = OperationTimer::cloneOpInContext(builder, op);

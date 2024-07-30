@@ -5,7 +5,7 @@ import jax.lax
 import enzyme_ad.jax as enzyme_jax
 
 def test(x, y, z, w):
-    return x * y - x * z - x * w
+    return x @ z + y @ z + w @ z + 3
 
 class Simple(absltest.TestCase):
     def test_simple_random(self):
