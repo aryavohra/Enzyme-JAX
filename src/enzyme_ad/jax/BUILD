@@ -1,6 +1,9 @@
 load("@jax//jaxlib:symlink_files.bzl", "symlink_inputs")
 load("@pybind11_bazel//:build_defs.bzl", "pybind_extension", "pybind_library")
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library")
+load("@tensat_crate_index//:defs.bzl", "all_crate_deps")
+load("deps/rust_cxx_bridge.bzl", "rust_cxx_bridge")
 
 exports_files(["enzymexlamlir-opt.cpp"])
 
@@ -117,6 +120,7 @@ cc_library(
         ":TransformOpsIncGen",
         ":TransformOpsImplIncGen",
         ":XLADerivatives",
+        ":tensat_lib",
     ],
 )
 
@@ -231,6 +235,8 @@ cc_library(
         ":EnzyeHLOPatternsIncGen",
         ":mhlo-derivatives",
         ":stablehlo-derivatives",
+        ":tensat_bridge/include",
+        ":equality_saturation",
         "@enzyme//:EnzymeMLIR",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:AffineDialect",
@@ -323,6 +329,7 @@ pybind_library(
     ]),
     deps = [
         ":XLADerivatives",
+        "tensat_lib",
         ":TransformOps",
         # This is similar to xla_binary rule and is needed to make XLA client compile.
         "@tsl//tsl/framework:allocator",
@@ -431,14 +438,80 @@ pybind_extension(
         "@llvm-project//mlir:MLIRBindingsPythonHeaders",
         "@stablehlo//:stablehlo_passes",
         "@xla//xla/hlo/ir:hlo",
-        "@xla//xla/mlir/backends/cpu/transforms:passes",
-        "@xla//xla/mlir/memref/transforms:passes",
-        "@xla//xla/mlir/runtime/transforms:passes",
         "@xla//xla/mlir_hlo:all_passes",
         "@xla//xla/mlir_hlo:deallocation_passes",
-        "@xla//xla/mlir_hlo:lhlo",
         "@xla//xla/service/cpu:cpu_executable",
         "@xla//xla/stream_executor:stream_executor_impl",
     ],
     linkstatic = 1
 )
+
+load("@tensat_crate_index//:defs.bzl", "aliases", "all_crate_deps")
+
+rust_library(
+    name = "tensat_lib",
+    crate_name = "tensat",
+    visibility = ["//visibility:public"],
+    srcs = glob(["deps/tensat/src/*.rs"]),
+    deps = all_crate_deps(
+        normal = True,
+    ) + [":tensat_bridge", ":XLADerivatives"],
+    proc_macro_deps = all_crate_deps(
+        proc_macro = True,
+    ),
+    edition = "2021",
+)
+
+rust_binary(
+    name = "tensat",
+    srcs = glob(["deps/tensat/src/main.rs"]),
+    visibility = ["//visibility:public"],
+    deps = all_crate_deps(
+        normal = True,
+    ) + [":tensat_lib"],
+    proc_macro_deps = all_crate_deps(
+        proc_macro = True,
+    ),
+    edition = "2021",
+)
+
+cc_library(
+    name = "equality_saturation",
+    hdrs = ["Passes/EqualitySaturation.h"],
+    deps = [
+        ":cxx_core",
+        "@llvm-project//mlir:IR",
+    ],
+    strip_include_prefix = "Passes",
+)
+
+rust_cxx_bridge(
+    name = "tensat_bridge",
+    src = "deps/tensat/src/input.rs",
+    deps = [
+        ":cxx_core",
+        ":equality_saturation",
+    ],
+)
+
+genrule(
+    name = "cxx_header",
+    outs = ["cxx.h"], 
+    cmd = "cxxbridge --header -o $(location cxx.h)",
+)
+
+cc_library(
+    name = "cxx_core",
+    hdrs = ["cxx.h"],
+    include_prefix = "rust",
+)
+
+cc_binary(
+    name = "graphtest",
+    visibility = ["//visibility:public"],
+    srcs = ["deps/tensat/src/graph.cc"],
+    deps = [
+        ":tensat_bridge",
+        ":tensat_lib",
+    ]
+)   

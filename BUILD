@@ -85,8 +85,9 @@ py_wheel(
     python_tag = "py3",
     requires = [
         "absl_py >= 2.0.0",
-        "jax >= 0.4.21",
-        "jaxlib >= 0.4.21",
+        "jax == 0.4.29",
+        "jaxlib == 0.4.29",
+	"ortools == 9.10.4067"
     ],
     strip_path_prefixes = ["src/"],
     summary = "Enzyme automatic differentiation tool.",
