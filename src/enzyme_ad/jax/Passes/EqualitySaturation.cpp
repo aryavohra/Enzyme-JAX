@@ -305,6 +305,7 @@ Operation* createStableHloOp(
     tensat::Ops op,
     SmallVector<Value> &operands,
     std::vector<std::vector<int64_t>> &other_vecs,
+    std::vector<int64_t> &int_args,
     MLIRContext &context
   ) {
   Operation* mlirOp = nullptr;
@@ -386,6 +387,14 @@ Operation* createStableHloOp(
       );
       break;
     }
+    case tensat::Ops::ConcatenateOp: {
+      mlirOp = builder.create<stablehlo::ConcatenateOp>(
+        builder.getUnknownLoc(),
+        operands, 
+        int_args[0] 
+      );
+      break;
+    }
     default:
       std::cout << "EGRAPH INVALID, UNSUPPORTED OP SHAPE REQUESTED" << "\n";
       assert(false);
@@ -421,8 +430,12 @@ uint64_t tensat::CostModel::get_cost(
   for (const auto& vec : other_vector_args)
     other_vecs.push_back(rust_slice_to_cpp_vector(vec));
 
+  std::vector<int64_t> int_args_as_vec;
+  for (const auto& num : int_args)
+    int_args_as_vec.push_back(num);
+
   // Create the MLIR operation
-  Operation* mlirOp = createStableHloOp(builder, op, operands, other_vecs, context);
+  Operation* mlirOp = createStableHloOp(builder, op, operands, other_vecs, int_args_as_vec, context);
   if (mlirOp) {
     auto cost = OperationTimer::getCost(mlirOp, 100, 100);
     mlirOp->erase();
@@ -487,7 +500,12 @@ rust::Vec<tensat::Shape> tensat::ShapeInference::get_shape(
   for (const auto& vec : other_vector_args)
     other_vecs.push_back(rust_slice_to_cpp_vector(vec));
 
-  Operation* mlirOp = createStableHloOp(builder, op, operands, other_vecs, context);
+  std::vector<int64_t> int_args_as_vec;
+  for (const auto& num : int_args)
+    int_args_as_vec.push_back(num);
+
+  // Create the MLIR operation
+  Operation* mlirOp = createStableHloOp(builder, op, operands, other_vecs, int_args_as_vec, context);
   if (mlirOp) {
     rust::Vec<tensat::Shape> shapes;
     for (auto res : mlirOp->getResults()) {
