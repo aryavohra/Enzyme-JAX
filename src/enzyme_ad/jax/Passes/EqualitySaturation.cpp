@@ -300,38 +300,14 @@ std::vector<int64_t> rust_slice_to_cpp_vector(rust::Slice<const int64_t> input_s
     return result;
 }
 
-// TODO: Avoid creating new MLIRContexts
-// TODO: Avoid creating dummy inputs (we need them again for cost measurement, so duplicated)
-// TODO: Lump binary ops together
-// TOD: Single function for all ops
-uint64_t tensat::CostModel::get_cost(
-    Ops op,
-    rust::Slice<const rust::Slice<const int64_t>> operand_dims,
-    rust::Slice<const tensat::Type> operand_types,
-    rust::Slice<const rust::Slice<const int64_t>> other_vector_args,
-    rust::Slice<const int64_t> int_args) const {
-  DialectRegistry registry;
-  InitializeRegistryAndPasses(wrap(&registry));
-
-  MLIRContext context(registry);
-  RegisterDialects(wrap(&context));
-
-  OpBuilder builder(&context);
-
-  SmallVector<Value> operands;
-  for (const auto& [dim_slice, type] : llvm::zip(operand_dims, operand_types)) {
-    auto tensor_type = tensat::CostModel::newTensorType(builder, dim_slice, type);
-    operands.push_back(OperationTimer::getDummyOp(builder, tensor_type)->getResult(0));
-  }
-
-  std::vector<std::vector<int64_t>> other_vecs;
-  for (const auto& vec : other_vector_args)
-    other_vecs.push_back(rust_slice_to_cpp_vector(vec));
-
+Operation* createStableHloOp(
+    OpBuilder &builder,
+    tensat::Ops op,
+    SmallVector<Value> &operands,
+    std::vector<std::vector<int64_t>> &other_vecs,
+    MLIRContext &context
+  ) {
   Operation* mlirOp = nullptr;
-  std::vector<int64_t> permutation_vec, shape_vec, lhs_batch_dim, rhs_batch_dim, lhs_contract_dim, rhs_contract_dim, precision_config, shape;
-  std::vector<int64_t> start_indices, limit_indices, strides;
-  std::vector<Attribute> precisionVec;
 
   switch (op) {
     case tensat::Ops::AddOp:
@@ -367,13 +343,14 @@ uint64_t tensat::CostModel::get_cost(
     case tensat::Ops::ReshapeOp:
       mlirOp = builder.create<stablehlo::ReshapeOp>(builder.getUnknownLoc(), deriveOutputType(operands[0], other_vecs[0]), operands[0]);
       break;
-    case tensat::Ops::DotGeneralOp:
-      lhs_batch_dim = other_vecs[0];
-      rhs_batch_dim = other_vecs[1];
-      lhs_contract_dim = other_vecs[2];
-      rhs_contract_dim = other_vecs[3];
-      precision_config = other_vecs[4];
-      shape = other_vecs[5];
+    case tensat::Ops::DotGeneralOp: {
+      std::vector<int64_t> lhs_batch_dim = other_vecs[0];
+      std::vector<int64_t> rhs_batch_dim = other_vecs[1];
+      std::vector<int64_t> lhs_contract_dim = other_vecs[2];
+      std::vector<int64_t> rhs_contract_dim = other_vecs[3];
+      std::vector<int64_t> precision_config = other_vecs[4];
+      std::vector<int64_t> shape = other_vecs[5];
+      std::vector<Attribute> precisionVec;
 
       for (auto& precision : precision_config) {
         switch (precision) {
@@ -395,30 +372,63 @@ uint64_t tensat::CostModel::get_cost(
         mlir::ArrayAttr::get(&context, llvm::ArrayRef(precisionVec))
       );
       break;
-    case tensat::Ops::SliceOp:
-      start_indices = other_vecs[0];
-      limit_indices = other_vecs[1];
-      strides = other_vecs[2];
+    }
+    case tensat::Ops::SliceOp: {
+      std::vector<int64_t> start_indices = other_vecs[0];
+      std::vector<int64_t> limit_indices = other_vecs[1];
+      std::vector<int64_t> strides = other_vecs[2];
       mlirOp = builder.create<stablehlo::SliceOp>(
         builder.getUnknownLoc(),
-	operands[0], 
-	start_indices,
-	limit_indices,
-	strides
+        operands[0], 
+        start_indices,
+        limit_indices,
+        strides
       );
       break;
+    }
     default:
       std::cout << "EGRAPH INVALID, UNSUPPORTED OP SHAPE REQUESTED" << "\n";
       assert(false);
-      return {};
+      return nullptr;
   }
 
+  return mlirOp;
+}
+// TODO: Avoid creating new MLIRContexts
+// TODO: Avoid creating dummy inputs (we need them again for cost measurement, so duplicated)
+uint64_t tensat::CostModel::get_cost(
+    Ops op,
+    rust::Slice<const rust::Slice<const int64_t>> operand_dims,
+    rust::Slice<const tensat::Type> operand_types,
+    rust::Slice<const rust::Slice<const int64_t>> other_vector_args,
+    rust::Slice<const int64_t> int_args) const {
+  
+  // Initialize MLIR context and builder
+  DialectRegistry registry;
+  InitializeRegistryAndPasses(wrap(&registry));
+  MLIRContext context(registry);
+  RegisterDialects(wrap(&context));
+  OpBuilder builder(&context);
+
+  // Create operands and other args
+  SmallVector<Value> operands;
+  for (const auto& [dim_slice, type] : llvm::zip(operand_dims, operand_types)) {
+    auto tensor_type = tensat::CostModel::newTensorType(builder, dim_slice, type);
+    operands.push_back(OperationTimer::getDummyOp(builder, tensor_type)->getResult(0));
+  }
+
+  std::vector<std::vector<int64_t>> other_vecs;
+  for (const auto& vec : other_vector_args)
+    other_vecs.push_back(rust_slice_to_cpp_vector(vec));
+
+  // Create the MLIR operation
+  Operation* mlirOp = createStableHloOp(builder, op, operands, other_vecs, context);
   if (mlirOp) {
     auto cost = OperationTimer::getCost(mlirOp, 100, 100);
     mlirOp->erase();
     return cost;
   }
-  return 100000;  
+  return 100000;
 }
 
 mlir::Type tensat::CostModel::newTensorType(OpBuilder& builder, rust::Slice<const int64_t> dims, tensat::Type type) {
@@ -458,14 +468,15 @@ rust::Vec<tensat::Shape> tensat::ShapeInference::get_shape(
     rust::Slice<const tensat::Type> operand_types,
     rust::Slice<const rust::Slice<const int64_t>> other_vector_args,
     rust::Slice<const int64_t> int_args) const {
+
+  // Initialize MLIR context and builder
   DialectRegistry registry;
   InitializeRegistryAndPasses(wrap(&registry));
-
   MLIRContext context(registry);
   RegisterDialects(wrap(&context));
-
   OpBuilder builder(&context);
 
+  // Create operands and other args
   SmallVector<Value> operands;
   for (const auto& [dim_slice, type] : llvm::zip(operand_dims, operand_types)) {
     auto tensor_type = tensat::CostModel::newTensorType(builder, dim_slice, type);
@@ -476,107 +487,21 @@ rust::Vec<tensat::Shape> tensat::ShapeInference::get_shape(
   for (const auto& vec : other_vector_args)
     other_vecs.push_back(rust_slice_to_cpp_vector(vec));
 
-  Operation* mlirOp = nullptr;
-  std::vector<int64_t> permutation_vec, shape_vec, lhs_batch_dim, rhs_batch_dim, lhs_contract_dim, rhs_contract_dim, precision_config, shape;
-  std::vector<int64_t> start_indices, limit_indices, strides;
-  std::vector<Attribute> precisionVec;
-  
-
-  switch (op) {
-    case tensat::Ops::AddOp:
-      mlirOp = builder.create<stablehlo::AddOp>(builder.getUnknownLoc(), operands[0], operands[1]);
-      break;
-    case tensat::Ops::MulOp:
-      mlirOp = builder.create<stablehlo::MulOp>(builder.getUnknownLoc(), operands[0], operands[1]);
-      break;
-    case tensat::Ops::DivOp:
-      mlirOp = builder.create<stablehlo::DivOp>(builder.getUnknownLoc(), operands[0], operands[1]);
-      break;
-    case tensat::Ops::SubtractOp:
-      mlirOp = builder.create<stablehlo::SubtractOp>(builder.getUnknownLoc(), operands[0], operands[1]);
-      break;
-    case tensat::Ops::NegOp:
-      mlirOp = builder.create<stablehlo::NegOp>(builder.getUnknownLoc(), operands[0]);
-      break;
-    case tensat::Ops::TanhOp:
-      mlirOp = builder.create<stablehlo::TanhOp>(builder.getUnknownLoc(), operands[0]);
-      break;
-    case tensat::Ops::ExpOp:
-      mlirOp = builder.create<stablehlo::ExpOp>(builder.getUnknownLoc(), operands[0]);
-      break;
-    case tensat::Ops::MinOp:
-      mlirOp = builder.create<stablehlo::MinOp>(builder.getUnknownLoc(), operands[0], operands[1]);
-      break;
-    case tensat::Ops::MaxOp:
-      mlirOp = builder.create<stablehlo::MaxOp>(builder.getUnknownLoc(), operands[0], operands[1]);
-      break;
-    case tensat::Ops::TransposeOp:
-      mlirOp = builder.create<stablehlo::TransposeOp>(builder.getUnknownLoc(), operands[0], other_vecs[0]);
-      break;
-    case tensat::Ops::ReshapeOp:
-      mlirOp = builder.create<stablehlo::ReshapeOp>(builder.getUnknownLoc(), deriveOutputType(operands[0], other_vecs[0]), operands[0]);
-      break;
-    case tensat::Ops::DotGeneralOp:
-      lhs_batch_dim = other_vecs[0];
-      rhs_batch_dim = other_vecs[1];
-      lhs_contract_dim = other_vecs[2];
-      rhs_contract_dim = other_vecs[3];
-      precision_config = other_vecs[4];
-      shape = other_vecs[5];
-
-      for (auto& precision : precision_config) {
-        switch (precision) {
-          case 0:
-            precisionVec.push_back(stablehlo::PrecisionAttr::get(&context, stablehlo::Precision::DEFAULT)); break;
-          case 1:
-            precisionVec.push_back(stablehlo::PrecisionAttr::get(&context, stablehlo::Precision::HIGH)); break;
-          case 2:
-            precisionVec.push_back(stablehlo::PrecisionAttr::get(&context, stablehlo::Precision::HIGHEST)); break;
-        }
-      }
-
-      mlirOp = builder.create<stablehlo::DotGeneralOp>(
-        builder.getUnknownLoc(),
-        deriveOutputType(operands[1], shape),
-        operands[0],
-        operands[1],
-        stablehlo::DotDimensionNumbersAttr::get(&context, lhs_batch_dim, rhs_batch_dim, lhs_contract_dim, rhs_contract_dim),
-        mlir::ArrayAttr::get(&context, llvm::ArrayRef(precisionVec))
-      );
-      break;
-    case tensat::Ops::SliceOp:
-      start_indices = other_vecs[0];
-      limit_indices = other_vecs[1];
-      strides = other_vecs[2];
-      mlirOp = builder.create<stablehlo::SliceOp>(
-        builder.getUnknownLoc(),
-	operands[0], 
-	start_indices,
-	limit_indices,
-	strides
-      );
-      break;
-    default:
-      std::cout << "EGRAPH INVALID, UNSUPPORTED OP SHAPE REQUESTED" << "\n";
-      assert(false);
-      return {};
+  Operation* mlirOp = createStableHloOp(builder, op, operands, other_vecs, context);
+  if (mlirOp) {
+    rust::Vec<tensat::Shape> shapes;
+    for (auto res : mlirOp->getResults()) {
+      auto output_tensor = res.getType().cast<TensorType>();
+      auto shape_array = castArrayRefToInt32(output_tensor.getShape());
+      rust::Vec<int> rusty_shape;
+      for (const auto& dim : shape_array)
+        rusty_shape.push_back(dim);
+      shapes.push_back({rusty_shape});
+    }
+    mlirOp->erase();
+    return shapes;
   }
-
-  rust::Vec<tensat::Shape> shapes;
-  
-  for (auto res : mlirOp->getResults()) {
-    auto output_tensor = res.getType().cast<TensorType>();
-    auto shape_array = castArrayRefToInt32(output_tensor.getShape());
-    rust::Vec<int> rusty_shape;
-
-    for (const auto& dim : shape_array)
-      rusty_shape.push_back(dim);
-
-    shapes.push_back({rusty_shape});
-  }
-
-  mlirOp->erase();
-  return shapes;
+  return {};
 }
 
 std::unique_ptr<tensat::ShapeInference> tensat::newShapeInference() {
