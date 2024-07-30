@@ -955,7 +955,6 @@ std::unique_ptr<rust::Slice<int>> handleOperand(
 
       for (auto& node : nodes) {
         Operation* newOp = nullptr;
-
         // Create the new operation based on the operands
         if (node.name == "Var" || node.name == "Num") {
           /* do nothing */
@@ -964,8 +963,9 @@ std::unique_ptr<rust::Slice<int>> handleOperand(
           opVals.push_back(block.getArgument(blockArgNumber));
           continue;
         } else if (node.name == "Index") {
-          int index = nodes[node.operands[1]].operands[0];
-          opVals.push_back(opVals[index].getDefiningOp()->getResult(index));
+          int index = nodes[node.operands[0]].operands[0];
+          int input = node.operands[1];
+          opVals.push_back(opVals[input].getDefiningOp()->getResult(index));
           continue;
         } else if (node.name == "NegOp") {
           newOp = createUnaryOp<stablehlo::NegOp>(builder, opVals, node);
@@ -1041,7 +1041,7 @@ std::unique_ptr<rust::Slice<int>> handleOperand(
         } else if (node.name == "blackbox") {
           size_t numOperands = node.operands.size() - 1;
           auto blackboxID = nodes[node.operands[numOperands]].operands[0];
-          Operation* newOp = blackboxIDToTensorInfo->at(blackboxID);
+          newOp = blackboxIDToTensorInfo->at(blackboxID);
     
           // Really subtle error arose here from not handling Num properly.
           // We might want to have a Num hashmap 
@@ -1053,17 +1053,10 @@ std::unique_ptr<rust::Slice<int>> handleOperand(
     
           // Do we need to account for insertion points at all?
           builder.insert(newOp);
-    
-          // TODO: why does everything break when we comment these four lines below?
-          block.push_back(newOp);
-          opVals.push_back(newOp->getResult(0));
-          std::cout << "pushed to block" << "\n";
-          continue;
         } else {
           // TODO: implement other operations
           std::cout << "UNIMPLEMENTED " << node.name << "\n";
         }
-
         if (newOp) {
           block.push_back(newOp);
           opVals.push_back(newOp->getResult(0));
@@ -1077,9 +1070,8 @@ std::unique_ptr<rust::Slice<int>> handleOperand(
       }
 
       assert(!block.empty());
-
-      auto returnOp = builder.create<func::ReturnOp>(builder.getUnknownLoc(),
-      block.back().getResults()); block.push_back(returnOp);
+      auto returnOp = builder.create<func::ReturnOp>(builder.getUnknownLoc(), block.back().getResults()); 
+      block.push_back(returnOp);
     }
 
     void runOnOperation() override {
