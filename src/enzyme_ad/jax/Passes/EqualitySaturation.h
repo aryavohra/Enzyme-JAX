@@ -25,7 +25,7 @@ public:
     rust::Slice<const int64_t> int_args) const;
 
   static mlir::Type newTensorType(mlir::OpBuilder &builder,
-                           rust::Slice<const int64_t> dims,
+                           const rust::Slice<const int64_t> &dims,
                            tensat::Type type);
   static mlir::Type tensatTypeToMlirType(mlir::OpBuilder &builder,
                                   tensat::Type type);

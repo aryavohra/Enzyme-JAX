@@ -444,7 +444,7 @@ uint64_t tensat::CostModel::get_cost(
   return 100000;
 }
 
-mlir::Type tensat::CostModel::newTensorType(OpBuilder& builder, rust::Slice<const int64_t> dims, tensat::Type type) {
+mlir::Type tensat::CostModel::newTensorType(OpBuilder& builder, const rust::Slice<const int64_t> &dims, tensat::Type type) {
   auto dimsRef = llvm::ArrayRef(dims.data(), dims.size());
   auto mlirType = tensatTypeToMlirType(builder, type);
   return RankedTensorType::get(dimsRef, mlirType);
@@ -840,6 +840,18 @@ std::unique_ptr<rust::Slice<int>> handleOperand(
           { strides.data(), strides.size() },
           { output_shape_array.data(), output_shape_array.size() }
         ).into_raw();
+      } else if (isa<func::ReturnOp>(op)) {
+        rust::vec<tensat::Shape> shapes;
+        int numOperands = op->getNumOperands();
+        std::vector<tensat::TensorInfo *> processedOperands;
+        for (size_t i = 0; i < numOperands; i++) {
+          auto operand = handleOperandPartial(op->getOperand(i));
+          processedOperands.push_back(operand);
+        }
+        auto operandPtrsSlice = rust::Slice<tensat::TensorInfo *const>{
+            processedOperands.data(),
+            static_cast<size_t>(processedOperands.size())};
+        tensorInfo = graph->new_return_op(operandPtrsSlice).into_raw();
       } else {
         int numOperands = op->getNumOperands();
         rust::vec<tensat::Shape> shapes;
@@ -883,10 +895,7 @@ std::unique_ptr<rust::Slice<int>> handleOperand(
       std::unordered_map<int, tensat::TensorInfo*> blockArgToTensorInfo;
 
       module.walk([&](func::ReturnOp op) {
-        // Call dfs() on the things that are returned.
-        for (auto value : op.getOperands()) {
-          dfs(value.getDefiningOp(), &opToTensorInfo, &blockArgToTensorInfo, blackboxIDToTensorInfo, builder, graph);
-        }
+        dfs(op, &opToTensorInfo, &blockArgToTensorInfo, blackboxIDToTensorInfo, builder, graph);
       });
 
       graph->print_rec_expr();
@@ -1038,6 +1047,9 @@ std::unique_ptr<rust::Slice<int>> handleOperand(
           auto limitIndices = parseNumVec(nodes, nodes[node.operands[2]]);
           auto strides = parseNumVec(nodes, nodes[node.operands[3]]);
           newOp = builder.create<stablehlo::SliceOp>(location, operand, startIndices, limitIndices, strides);
+        } else if (node.name == "ReturnOp") {
+          auto inputs = parseOpVec(opVals, nodes[node.operands[0]]);
+          newOp = builder.create<func::ReturnOp>(location, inputs);          
         } else if (node.name == "blackbox") {
           size_t numOperands = node.operands.size() - 1;
           auto blackboxID = nodes[node.operands[numOperands]].operands[0];
@@ -1068,10 +1080,6 @@ std::unique_ptr<rust::Slice<int>> handleOperand(
           opVals.push_back(nullptr);
         }
       }
-
-      assert(!block.empty());
-      auto returnOp = builder.create<func::ReturnOp>(builder.getUnknownLoc(), block.back().getResults()); 
-      block.push_back(returnOp);
     }
 
     void runOnOperation() override {
@@ -1083,15 +1091,6 @@ std::unique_ptr<rust::Slice<int>> handleOperand(
       OpBuilder builder(context);
       auto graph = createEgraph(&blackboxIDToTensorInfo, builder, module);
       auto optimized = graph->optimize();
-
-      // TODO: Just for testing, remove later
-      for (auto& node : optimized) {
-        std::cout << node.name << ' ';
-        for (auto& i : node.operands) {
-          std::cout << i << ' ';
-        }
-        std::cout << std::endl;
-      }
 
       std::cout << "reconstructing\n";
       reconstructStablehlo(&module, &blackboxIDToTensorInfo, optimized, builder);
