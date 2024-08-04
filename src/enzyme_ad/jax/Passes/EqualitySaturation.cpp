@@ -95,7 +95,6 @@ public:
       return 0;
     
     if (runtimeCache.contains(op)) {
-      std::cout << "ENTERED CACHE" << "\n";
       return runtimeCache[op];
     }
 
@@ -132,7 +131,8 @@ public:
     wrapperModule.erase();
 
     // std::cout << op->getName().getStringRef().str() << "\n";
-    runtimeCache.try_emplace(op, duration);
+    auto indexOp = op->clone();
+    runtimeCache.try_emplace(indexOp, duration);
     return duration;
   }
 
