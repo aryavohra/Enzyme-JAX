@@ -292,7 +292,7 @@ mlir::Type deriveOutputType(mlir::Value &input, llvm::ArrayRef<int64_t> shape) {
   return newType;
 }
 
-std::vector<int64_t> rust_slice_to_cpp_vector(rust::Slice<const int64_t> input_slice) {
+std::vector<int64_t> rust_vec_to_cpp_vector(rust::Vec<int64_t> input_slice) {
     std::vector<int64_t> result;
     for (const auto& value : input_slice) {
       result.push_back(value);
@@ -407,9 +407,9 @@ Operation* createStableHloOp(
 // TODO: Avoid creating dummy inputs (we need them again for cost measurement, so duplicated)
 uint64_t tensat::CostModel::get_cost(
     Ops op,
-    rust::Slice<const rust::Slice<const int64_t>> operand_dims,
+    rust::Slice<const rust::Vec<int64_t>> operand_dims,
     rust::Slice<const tensat::Type> operand_types,
-    rust::Slice<const rust::Slice<const int64_t>> other_vector_args,
+    rust::Slice<const rust::Vec<int64_t>> other_vector_args,
     rust::Slice<const int64_t> int_args) const {
   
   // Initialize MLIR context and builder
@@ -428,7 +428,7 @@ uint64_t tensat::CostModel::get_cost(
 
   std::vector<std::vector<int64_t>> other_vecs;
   for (const auto& vec : other_vector_args)
-    other_vecs.push_back(rust_slice_to_cpp_vector(vec));
+    other_vecs.push_back(rust_vec_to_cpp_vector(vec));
 
   std::vector<int64_t> int_args_as_vec;
   for (const auto& num : int_args)
@@ -444,7 +444,7 @@ uint64_t tensat::CostModel::get_cost(
   return 100000;
 }
 
-mlir::Type tensat::CostModel::newTensorType(OpBuilder& builder, const rust::Slice<const int64_t> &dims, tensat::Type type) {
+mlir::Type tensat::CostModel::newTensorType(OpBuilder& builder, const rust::Vec<int64_t> &dims, tensat::Type type) {
   auto dimsRef = llvm::ArrayRef(dims.data(), dims.size());
   auto mlirType = tensatTypeToMlirType(builder, type);
   return RankedTensorType::get(dimsRef, mlirType);
@@ -485,9 +485,9 @@ rust::Vec<int32_t> castArrayRefToRustVec(llvm::ArrayRef<int64_t> shape) {
 
 rust::Vec<tensat::Shape> tensat::ShapeInference::get_shape(
     Ops op,
-    rust::Slice<const rust::Slice<const int64_t>> operand_dims,
+    rust::Slice<const rust::Vec<int64_t>> operand_dims,
     rust::Slice<const tensat::Type> operand_types,
-    rust::Slice<const rust::Slice<const int64_t>> other_vector_args,
+    rust::Slice<const rust::Vec<int64_t>> other_vector_args,
     rust::Slice<const int64_t> int_args) const {
 
   // Initialize MLIR context and builder
@@ -506,7 +506,7 @@ rust::Vec<tensat::Shape> tensat::ShapeInference::get_shape(
 
   std::vector<std::vector<int64_t>> other_vecs;
   for (const auto& vec : other_vector_args)
-    other_vecs.push_back(rust_slice_to_cpp_vector(vec));
+    other_vecs.push_back(rust_vec_to_cpp_vector(vec));
 
   std::vector<int64_t> int_args_as_vec;
   for (const auto& num : int_args)

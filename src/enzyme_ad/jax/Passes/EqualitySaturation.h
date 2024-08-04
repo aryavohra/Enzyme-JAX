@@ -19,13 +19,13 @@ public:
   // SHOULD TensorData have a type field too?
   uint64_t get_cost(
     Ops op,
-    rust::Slice<const rust::Slice<const int64_t>> operand_dims,
+    rust::Slice<const rust::Vec<int64_t>> operand_dims,
     rust::Slice<const Type> operand_types,
-    rust::Slice<const rust::Slice<const int64_t>> other_vector_args,
+    rust::Slice<const rust::Vec<int64_t>> other_vector_args,
     rust::Slice<const int64_t> int_args) const;
 
   static mlir::Type newTensorType(mlir::OpBuilder &builder,
-                           const rust::Slice<const int64_t> &dims,
+                           const rust::Vec<int64_t> &dims,
                            tensat::Type type);
   static mlir::Type tensatTypeToMlirType(mlir::OpBuilder &builder,
                                   tensat::Type type);
@@ -36,9 +36,9 @@ public:
 
   rust::Vec<Shape> get_shape(
     Ops op,
-    rust::Slice<const rust::Slice<const int64_t>> operand_dims,
+    rust::Slice<const rust::Vec<int64_t>> operand_dims,
     rust::Slice<const Type> operand_types,
-    rust::Slice<const rust::Slice<const int64_t>> other_vector_args,
+    rust::Slice<const rust::Vec<int64_t>> other_vector_args,
     rust::Slice<const int64_t> int_args) const;
 };
 
