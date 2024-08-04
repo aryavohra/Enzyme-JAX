@@ -289,14 +289,14 @@ llvm::DenseMap<Operation*, uint64_t, OperationMapInfo> OperationTimer::runtimeCa
 MLIRContext* OperationTimer::context = nullptr;
 
 /**
-* Create a new mlir::Type based on the element type of an existing mlir::Type and the provided shape.
+* Create a new mlir::RankedTensorType based on the type of an existing mlir::Value and the provided shape.
 */
-mlir::Type deriveOutputType(mlir::Value &input, llvm::ArrayRef<int64_t> shape) {
+mlir::RankedTensorType deriveOutputType(mlir::Value &input, llvm::ArrayRef<int64_t> shape) {
   auto inputType = input.getType();
-  assert(isa<TensorType>(inputType));
-  auto elementType = inputType.cast<TensorType>().getElementType();
-  auto newType = RankedTensorType::get(shape, elementType);
-  return newType;
+  assert(isa<RankedTensorType>(inputType));
+  auto ranked = inputType.cast<RankedTensorType>();
+  RankedTensorType::Builder builder(ranked);
+  return builder.setShape(shape);
 }
 
 std::vector<int64_t> rust_vec_to_cpp_vector(rust::Vec<int64_t> input_slice) {
@@ -916,9 +916,11 @@ namespace {
      * Parse the Vec nodes with Nums (e.g Vec(Num(128), Num(128))) emitted by tensat node construction.
      */
     std::vector<int64_t> parseNumVec(rust::vec<tensat::Node> &nodes, tensat::Node &seq) {
+      assert(seq.name == "Vec");
       std::vector<int64_t> result;
       
       for (auto i : seq.operands) {
+        assert(nodes[i].name == "Num");
         result.push_back(nodes[i].operands[0]);
       }
 
@@ -929,9 +931,11 @@ namespace {
      * Parse the Vec nodes with arbitrary operations (e.g Vec(Input(...), AddOp(...))) emitted by tensat node construction.
      */
     std::vector<Value> parseOpVec(std::vector<Value> &opVals, tensat::Node &seq) {
+      assert(seq.name == "Vec");
       std::vector<Value> result;
 
       for (auto i : seq.operands) {
+        assert(opVals[i] != nullptr);
         result.push_back(opVals[i]);
       }
       
@@ -963,7 +967,7 @@ namespace {
       for (auto& node : nodes) {
         Operation* newOp = nullptr;
         // Create the new operation based on the operands
-        if (node.name == "Var" || node.name == "Num") {
+        if (node.name == "Var" || node.name == "Num" || node.name == "Vec") {
           /* do nothing */
         } else if (node.name == "Input") {
           int blockArgNumber = nodes[node.operands[1]].operands[0];
@@ -994,19 +998,14 @@ namespace {
           newOp = createBinaryOp<stablehlo::MaxOp>(builder, opVals, node);
         } else if (node.name == "TransposeOp") {
           auto input = opVals[node.operands[0]];
-          // TODO: Can this be done cleaner, getting the Value earlier from Var instead of accessing now?
-          //  Can't be certain until we've implemented many ops using Var.
-          // TODO: Untested
           auto permutation = parseNumVec(nodes, nodes[node.operands[1]]);
           newOp = builder.create<stablehlo::TransposeOp>(location, input, permutation);
         } else if (node.name == "ReshapeOp") {
-          // TODO: Untested
           auto input = opVals[node.operands[0]];
           auto shape = parseNumVec(nodes, nodes[node.operands[1]]);
           auto newType = deriveOutputType(input, shape);
           newOp = builder.create<stablehlo::ReshapeOp>(location, newType, input);
         } else if (node.name == "DotGeneralOp") {
-          // TODO: Untested
           auto lhs = opVals[node.operands[0]];
           auto rhs = opVals[node.operands[1]];
 
@@ -1052,6 +1051,7 @@ namespace {
           size_t numOperands = node.operands.size() - 1;
           auto blackboxID = nodes[node.operands[numOperands]].operands[0];
           newOp = blackboxIDToTensorInfo->at(blackboxID);
+          assert(numOperands == newOp->getNumOperands());
     
           // Really subtle error arose here from not handling Num properly.
           // We might want to have a Num hashmap 
