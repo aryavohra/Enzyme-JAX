@@ -99,11 +99,7 @@ public:
       return runtimeCache[op];
     }
 
-    DialectRegistry registry;
-    InitializeRegistryAndPasses(wrap(&registry));
-
-    MLIRContext context(registry);
-    RegisterDialects(wrap(&context));
+    auto context = OperationTimer::getContext();
 
     ModuleOp wrapperModule = createModuleFromOperation(context, op);
     auto executable = prepareExecutable(wrapperModule);
@@ -136,7 +132,7 @@ public:
     wrapperModule.erase();
 
     // std::cout << op->getName().getStringRef().str() << "\n";
-    // runtimeCache.try_emplace(op, duration);
+    runtimeCache.try_emplace(op, duration);
     return duration;
   }
 
@@ -156,9 +152,18 @@ public:
     return cloneOpInContext(builder, op, mapping);
   }
 
+  static MLIRContext *getContext() {
+    if (!context) {
+      DialectRegistry registry;
+      InitializeRegistryAndPasses(wrap(&registry));
+      context = new MLIRContext(registry);
+      RegisterDialects(wrap(context));
+    }
+    return context;
+  }
 private:
   static llvm::DenseMap<Operation*, uint64_t, OperationMapInfo> runtimeCache;
-
+  static MLIRContext* context;
   inline static bool logsInitialized;
   
   /**
@@ -172,8 +177,8 @@ private:
    * TODO: Surely there's a simpler way to do this?
   */
   static Operation *cloneOpInContext(OpBuilder &builder,
-                                           Operation *op,
-                                           IRMapping& mapping) {
+                                     Operation *op,
+                                     IRMapping& mapping) {
     Location location = builder.getUnknownLoc();
 
     // Recursively clone regions
@@ -225,9 +230,9 @@ private:
    * Wrap operation into a module, with dummy (constant zero) inputs as
    * its operands. Doesn't mutate op (instead it creates a copy).
    */
-  static ModuleOp createModuleFromOperation(MLIRContext &context, Operation *op) {
+  static ModuleOp createModuleFromOperation(MLIRContext *context, Operation *op) {
     // Wrap operation into a module with dummy inputs
-    OpBuilder builder(&context);
+    OpBuilder builder(context);
     Location location = builder.getUnknownLoc();
     ModuleOp wrapperModule = ModuleOp::create(location);
 
@@ -236,7 +241,7 @@ private:
     auto *newOp = cloneOpInContext(builder, op);
 
     // Create a func.func to wrap newOp around
-    FunctionType funcType = FunctionType::get(&context, {}, op->getResultTypes());
+    FunctionType funcType = FunctionType::get(context, {}, op->getResultTypes());
     func::FuncOp funcOp = builder.create<func::FuncOp>(location, "main", funcType);
     block->push_back(funcOp);
 
@@ -281,6 +286,7 @@ private:
 };
 
 llvm::DenseMap<Operation*, uint64_t, OperationMapInfo> OperationTimer::runtimeCache;
+MLIRContext* OperationTimer::context = nullptr;
 
 /**
 * Create a new mlir::Type based on the element type of an existing mlir::Type and the provided shape.
@@ -307,7 +313,7 @@ Operation* createStableHloOp(
     SmallVector<Value> &operands,
     std::vector<std::vector<int64_t>> &other_vecs,
     std::vector<int64_t> &int_args,
-    MLIRContext &context
+    MLIRContext *context
   ) {
   Operation* mlirOp = nullptr;
 
@@ -357,11 +363,11 @@ Operation* createStableHloOp(
       for (auto& precision : precision_config) {
         switch (precision) {
           case 0:
-            precisionVec.push_back(stablehlo::PrecisionAttr::get(&context, stablehlo::Precision::DEFAULT)); break;
+            precisionVec.push_back(stablehlo::PrecisionAttr::get(context, stablehlo::Precision::DEFAULT)); break;
           case 1:
-            precisionVec.push_back(stablehlo::PrecisionAttr::get(&context, stablehlo::Precision::HIGH)); break;
+            precisionVec.push_back(stablehlo::PrecisionAttr::get(context, stablehlo::Precision::HIGH)); break;
           case 2:
-            precisionVec.push_back(stablehlo::PrecisionAttr::get(&context, stablehlo::Precision::HIGHEST)); break;
+            precisionVec.push_back(stablehlo::PrecisionAttr::get(context, stablehlo::Precision::HIGHEST)); break;
         }
       }
 
@@ -370,8 +376,8 @@ Operation* createStableHloOp(
         deriveOutputType(operands[1], shape),
         operands[0],
         operands[1],
-        stablehlo::DotDimensionNumbersAttr::get(&context, lhs_batch_dim, rhs_batch_dim, lhs_contract_dim, rhs_contract_dim),
-        mlir::ArrayAttr::get(&context, llvm::ArrayRef(precisionVec))
+        stablehlo::DotDimensionNumbersAttr::get(context, lhs_batch_dim, rhs_batch_dim, lhs_contract_dim, rhs_contract_dim),
+        mlir::ArrayAttr::get(context, llvm::ArrayRef(precisionVec))
       );
       break;
     }
@@ -404,7 +410,7 @@ Operation* createStableHloOp(
 
   return mlirOp;
 }
-// TODO: Avoid creating new MLIRContexts
+
 // TODO: Avoid creating dummy inputs (we need them again for cost measurement, so duplicated)
 uint64_t tensat::CostModel::get_cost(
     Ops op,
@@ -412,12 +418,8 @@ uint64_t tensat::CostModel::get_cost(
     rust::Slice<const tensat::Type> operand_types,
     rust::Slice<const rust::Vec<int64_t>> other_vector_args,
     rust::Slice<const int64_t> int_args) const {
-  // Initialize MLIR context and builder
-  DialectRegistry registry;
-  InitializeRegistryAndPasses(wrap(&registry));
-  MLIRContext context(registry);
-  RegisterDialects(wrap(&context));
-  OpBuilder builder(&context);
+  auto context = OperationTimer::getContext();
+  OpBuilder builder(context);
 
   // Create operands and other args
   SmallVector<Value> operands;
@@ -490,13 +492,8 @@ rust::Vec<tensat::Shape> tensat::ShapeInference::get_shape(
     rust::Slice<const tensat::Type> operand_types,
     rust::Slice<const rust::Vec<int64_t>> other_vector_args,
     rust::Slice<const int64_t> int_args) const {
-
-  // Initialize MLIR context and builder
-  DialectRegistry registry;
-  InitializeRegistryAndPasses(wrap(&registry));
-  MLIRContext context(registry);
-  RegisterDialects(wrap(&context));
-  OpBuilder builder(&context);
+  auto context = OperationTimer::getContext();
+  OpBuilder builder(context);
 
   // Create operands and other args
   SmallVector<Value> operands;
@@ -554,7 +551,7 @@ namespace {
         std::unordered_map<Operation*, tensat::TensorInfo*> *opToTensorInfo,
         std::unordered_map<int, tensat::TensorInfo*> *blockArgToTensorInfo,
         std::vector<Operation*> *blackboxIDToTensorInfo,
-  OpBuilder &builder,
+        OpBuilder &builder,
         Box<tensat::CppGraphConverter> &graph) {
       if (auto defOp = operand.getDefiningOp()) {
         // Use existing TensorInfo if already processed
@@ -607,16 +604,16 @@ namespace {
 //     return operand;
 // }
 
-// Handle rust::Slice<const int> directly, assuming we can pass it through without modification
-std::unique_ptr<rust::Slice<int>> handleOperand(
-    std::unique_ptr<rust::Slice<int>> operand,
-    std::unordered_map<Operation*, tensat::TensorInfo*> *opToTensorInfo,
-    std::unordered_map<int, tensat::TensorInfo*> *blockArgToTensorInfo,
-    std::vector<Operation*> *blackboxIDToTensorInfo,
-    OpBuilder &builder, 
-    Box<tensat::CppGraphConverter> &graph) {
-    return operand;
-}
+    // Handle rust::Slice<const int> directly, assuming we can pass it through without modification
+    std::unique_ptr<rust::Slice<int>> handleOperand(
+        std::unique_ptr<rust::Slice<int>> operand,
+        std::unordered_map<Operation*, tensat::TensorInfo*> *opToTensorInfo,
+        std::unordered_map<int, tensat::TensorInfo*> *blockArgToTensorInfo,
+        std::vector<Operation*> *blackboxIDToTensorInfo,
+        OpBuilder &builder, 
+        Box<tensat::CppGraphConverter> &graph) {
+        return operand;
+    }
 
     template <typename CreateOpFunc, typename... Args>
     tensat::TensorInfo* handleOperation(
@@ -673,55 +670,55 @@ std::unique_ptr<rust::Slice<int>> handleOperand(
         auto mul = cast<stablehlo::MulOp>(op);
         auto output_tensor = mul->getResult(0).getType().cast<TensorType>();
         auto shape_array = castArrayRefToInt32(output_tensor.getShape());
-	auto shape = rust::Slice<const int>{ shape_array.data(), shape_array.size() };
+	      auto shape = rust::Slice<const int>{ shape_array.data(), shape_array.size() };
         tensorInfo = graph->new_mul_op(*handleOperandPartial(mul.getLhs()), *handleOperandPartial(mul.getRhs()), shape).into_raw();
       } else if (isa<stablehlo::SubtractOp>(op)) {
         auto subtract = cast<stablehlo::SubtractOp>(op);
         auto output_tensor = subtract->getResult(0).getType().cast<TensorType>();
         auto shape_array = castArrayRefToInt32(output_tensor.getShape());
-	auto shape = rust::Slice<const int>{ shape_array.data(), shape_array.size() };
+	      auto shape = rust::Slice<const int>{ shape_array.data(), shape_array.size() };
         tensorInfo = graph->new_subtract_op(*handleOperandPartial(subtract.getLhs()), *handleOperandPartial(subtract.getRhs()), shape).into_raw();
       } else if (isa<stablehlo::DivOp>(op)) {
         auto div = cast<stablehlo::DivOp>(op);
         auto output_tensor = div->getResult(0).getType().cast<TensorType>();
         auto shape_array = castArrayRefToInt32(output_tensor.getShape());
-	auto shape = rust::Slice<const int>{ shape_array.data(), shape_array.size() };
+	      auto shape = rust::Slice<const int>{ shape_array.data(), shape_array.size() };
         tensorInfo = graph->new_div_op(*handleOperandPartial(div.getLhs()), *handleOperandPartial(div.getRhs()), shape).into_raw();
       } else if (isa<stablehlo::AddOp>(op)) {
         auto add = cast<stablehlo::AddOp>(op);
         auto output_tensor = add->getResult(0).getType().cast<TensorType>();
         auto shape_array = castArrayRefToInt32(output_tensor.getShape());
-	auto shape = rust::Slice<const int>{ shape_array.data(), shape_array.size() };
+	      auto shape = rust::Slice<const int>{ shape_array.data(), shape_array.size() };
         tensorInfo = graph->new_add_op(*handleOperandPartial(add.getLhs()), *handleOperandPartial(add.getRhs()), shape).into_raw();
       } else if (isa<stablehlo::MinOp>(op)) {
         auto min = cast<stablehlo::MinOp>(op);
         auto output_tensor = min->getResult(0).getType().cast<TensorType>();
         auto shape_array = castArrayRefToInt32(output_tensor.getShape());
-	auto shape = rust::Slice<const int>{ shape_array.data(), shape_array.size() };
+	      auto shape = rust::Slice<const int>{ shape_array.data(), shape_array.size() };
         tensorInfo = graph->new_min_op(*handleOperandPartial(min.getLhs()), *handleOperandPartial(min.getRhs()), shape).into_raw();
       } else if (isa<stablehlo::MaxOp>(op)) {
         auto max = cast<stablehlo::MaxOp>(op);
         auto output_tensor = max->getResult(0).getType().cast<TensorType>();
         auto shape_array = castArrayRefToInt32(output_tensor.getShape());
-	auto shape = rust::Slice<const int>{ shape_array.data(), shape_array.size() };
+	      auto shape = rust::Slice<const int>{ shape_array.data(), shape_array.size() };
         tensorInfo = graph->new_max_op(*handleOperandPartial(max.getLhs()), *handleOperandPartial(max.getRhs()), shape).into_raw();
       } else if (isa<stablehlo::TanhOp>(op)) {
         auto tanh = cast<stablehlo::TanhOp>(op);
         auto output_tensor = tanh->getResult(0).getType().cast<TensorType>();
         auto shape_array = castArrayRefToInt32(output_tensor.getShape());
-	auto shape = rust::Slice<const int>{ shape_array.data(), shape_array.size() };
+	      auto shape = rust::Slice<const int>{ shape_array.data(), shape_array.size() };
         tensorInfo = graph->new_tanh_op(*handleOperandPartial(tanh.getOperand()), shape).into_raw();
       } else if (isa<stablehlo::NegOp>(op)) {
         auto neg = cast<stablehlo::NegOp>(op);
         auto output_tensor = neg->getResult(0).getType().cast<TensorType>();
         auto shape_array = castArrayRefToInt32(output_tensor.getShape());
-	auto shape = rust::Slice<const int>{ shape_array.data(), shape_array.size() };
+	      auto shape = rust::Slice<const int>{ shape_array.data(), shape_array.size() };
         tensorInfo = graph->new_neg_op(*handleOperandPartial(neg.getOperand()), shape).into_raw();
       } else if (isa<stablehlo::ExpOp>(op)) {
         auto exp = cast<stablehlo::ExpOp>(op);
         auto output_tensor = exp->getResult(0).getType().cast<TensorType>();
         auto shape_array = castArrayRefToInt32(output_tensor.getShape());
-	auto shape = rust::Slice<const int>{ shape_array.data(), shape_array.size() };
+	      auto shape = rust::Slice<const int>{ shape_array.data(), shape_array.size() };
         tensorInfo = graph->new_exp_op(*handleOperandPartial(exp.getOperand()), shape).into_raw();
       } else if (isa<stablehlo::TransposeOp>(op)) {
         auto transpose = cast<stablehlo::TransposeOp>(op);
@@ -729,7 +726,7 @@ std::unique_ptr<rust::Slice<int>> handleOperand(
         auto permutation_slice = rust::Slice<const int> {
           permutation.data(), static_cast<size_t>(permutation.size())};
         auto output_shape = castArrayRefToInt32(transpose->getResult(0).getType().cast<TensorType>().getShape());
-	auto output_shape_slice = rust::Slice<const int> {
+	      auto output_shape_slice = rust::Slice<const int> {
 		output_shape.data(), output_shape.size() };
         tensorInfo = graph->new_transpose_op(
           *handleOperandPartial(transpose.getOperand()),
