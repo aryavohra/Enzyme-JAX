@@ -36,6 +36,7 @@
 #include <iostream>
 #include <string>
 #include <chrono>
+#include <thread>
 #include <memory>
 #include <sstream>
 
@@ -105,7 +106,7 @@ public:
     RegisterDialects(wrap(&context));
 
     ModuleOp wrapperModule = createModuleFromOperation(context, op);
-    auto executable = prepareExecutable(wrapperModule, op);
+    auto executable = prepareExecutable(wrapperModule);
 
     unsigned numResults = op->getNumResults();
     xla::PjRtBuffer* res[numResults];
@@ -116,18 +117,18 @@ public:
     for (unsigned i = 0; i < warmup + repetitions; i++) {
       if (i == warmup) t1 = std::chrono::high_resolution_clock::now();
       XLAExecute(executable, 0, nullptr, nullptr, numResults, res, &futures, nullptr);
-    }
 
+      // Cleanup
+      for (int i = 0; i < numResults; i++) {
+        PjRtBufferFree(res[i]);
+      }
+    }
+    
     assert(!futures);
 
     auto t2 = std::chrono::high_resolution_clock::now();
 
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
-
-    // Cleanup
-    for (int i = 0; i < numResults; i++) {
-      PjRtBufferFree(res[i]);
-    }
 
     FreeClient(executable->client());
     ExecutableFree(executable);
@@ -265,7 +266,7 @@ private:
   /**
    * Wrap and compile operation into a PjRtLoadedExecutable, to be passed into XLAExecute.
   */
-  static xla::PjRtLoadedExecutable* prepareExecutable(ModuleOp &wrapperModule, Operation *op) {
+  static xla::PjRtLoadedExecutable* prepareExecutable(ModuleOp &wrapperModule) {
     if (failed(verify(wrapperModule))) {
       llvm::errs() << "Module verification error\n";
     }
@@ -411,7 +412,6 @@ uint64_t tensat::CostModel::get_cost(
     rust::Slice<const tensat::Type> operand_types,
     rust::Slice<const rust::Vec<int64_t>> other_vector_args,
     rust::Slice<const int64_t> int_args) const {
-  
   // Initialize MLIR context and builder
   DialectRegistry registry;
   InitializeRegistryAndPasses(wrap(&registry));
@@ -433,9 +433,10 @@ uint64_t tensat::CostModel::get_cost(
   std::vector<int64_t> int_args_as_vec;
   for (const auto& num : int_args)
     int_args_as_vec.push_back(num);
-
+  
   // Create the MLIR operation
   Operation* mlirOp = createStableHloOp(builder, op, operands, other_vecs, int_args_as_vec, context);
+
   if (mlirOp) {
     auto cost = OperationTimer::getCost(mlirOp, 100, 100);
     mlirOp->erase();
