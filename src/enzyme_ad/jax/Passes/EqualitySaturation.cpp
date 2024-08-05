@@ -299,9 +299,9 @@ mlir::RankedTensorType deriveOutputType(mlir::Value &input, llvm::ArrayRef<int64
   return builder.setShape(shape);
 }
 
-std::vector<int64_t> rust_vec_to_cpp_vector(rust::Vec<int64_t> input_slice) {
+std::vector<int64_t> rust_vec_to_cpp_vector(tensat::Shape input_slice) {
     std::vector<int64_t> result;
-    for (const auto& value : input_slice) {
+    for (const auto& value : input_slice.shape) {
       result.push_back(value);
     }
     return result;
@@ -414,10 +414,10 @@ Operation* createStableHloOp(
 // TODO: Avoid creating dummy inputs (we need them again for cost measurement, so duplicated)
 uint64_t tensat::CostModel::get_cost(
     Ops op,
-    rust::Slice<const rust::Vec<int64_t>> operand_dims,
-    rust::Slice<const tensat::Type> operand_types,
-    rust::Slice<const rust::Vec<int64_t>> other_vector_args,
-    rust::Slice<const int64_t> int_args) const {
+    rust::Vec<tensat::Shape> operand_dims,
+    rust::Vec<Type> operand_types,
+    rust::Vec<tensat::Shape> other_vector_args,
+    rust::Vec<int64_t> int_args) const {
   auto context = OperationTimer::getContext();
   OpBuilder builder(context);
 
@@ -447,7 +447,8 @@ uint64_t tensat::CostModel::get_cost(
   return 100000;
 }
 
-mlir::Type tensat::CostModel::newTensorType(OpBuilder& builder, const rust::Vec<int64_t> &dims, tensat::Type type) {
+mlir::Type tensat::CostModel::newTensorType(OpBuilder& builder, tensat::Shape &shape, tensat::Type type) {
+	auto dims = shape.shape;
   auto dimsRef = llvm::ArrayRef(dims.data(), dims.size());
   auto mlirType = tensatTypeToMlirType(builder, type);
   return RankedTensorType::get(dimsRef, mlirType);
@@ -478,20 +479,20 @@ std::vector<int32_t> castArrayRefToInt32(llvm::ArrayRef<int64_t> shape) {
   return dims;
 }
 
-rust::Vec<int32_t> castArrayRefToRustVec(llvm::ArrayRef<int64_t> shape) {
-  rust::Vec<int32_t> dims;
+rust::Vec<int64_t> castArrayRefToRustVec(llvm::ArrayRef<int64_t> shape) {
+  rust::Vec<int64_t> dims;
   for (int64_t dim : shape) {
-    dims.push_back(static_cast<int32_t>(dim));
+    dims.push_back(static_cast<int64_t>(dim));
   }
   return dims;
 }
 
 rust::Vec<tensat::Shape> tensat::ShapeInference::get_shape(
     Ops op,
-    rust::Slice<const rust::Vec<int64_t>> operand_dims,
-    rust::Slice<const tensat::Type> operand_types,
-    rust::Slice<const rust::Vec<int64_t>> other_vector_args,
-    rust::Slice<const int64_t> int_args) const {
+    rust::Vec<tensat::Shape> operand_dims,
+    rust::Vec<Type> operand_types,
+    rust::Vec<tensat::Shape> other_vector_args,
+    rust::Vec<int64_t> int_args) const {
   auto context = OperationTimer::getContext();
   OpBuilder builder(context);
 
