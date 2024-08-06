@@ -684,13 +684,13 @@ namespace {
         auto shape_array = castArrayRefToInt32(output_tensor.getShape());
 	      auto shape = rust::Slice<const int>{ shape_array.data(), shape_array.size() };
         tensorInfo = graph->new_div_op(*handleOperandPartial(div.getLhs()), *handleOperandPartial(div.getRhs()), shape).into_raw();
-      } /*else if (isa<stablehlo::AddOp>(op)) {
+      } else if (isa<stablehlo::AddOp>(op)) {
         auto add = cast<stablehlo::AddOp>(op);
         auto output_tensor = add->getResult(0).getType().cast<TensorType>();
         auto shape_array = castArrayRefToInt32(output_tensor.getShape());
 	      auto shape = rust::Slice<const int>{ shape_array.data(), shape_array.size() };
         tensorInfo = graph->new_add_op(*handleOperandPartial(add.getLhs()), *handleOperandPartial(add.getRhs()), shape).into_raw();
-      } */ else if (isa<stablehlo::MinOp>(op)) {
+      } else if (isa<stablehlo::MinOp>(op)) {
         auto min = cast<stablehlo::MinOp>(op);
         auto output_tensor = min->getResult(0).getType().cast<TensorType>();
         auto shape_array = castArrayRefToInt32(output_tensor.getShape());
