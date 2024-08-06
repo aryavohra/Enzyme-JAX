@@ -1,3 +1,14 @@
+asan_copts = [
+    "-fsanitize=address",
+    "-fno-omit-frame-pointer",
+    "-fno-optimize-sibling-calls",
+    "-O1",
+]
+ 
+asan_linkopts = [
+    "-fsanitize=address",
+]
+ 
 load("@jax//jaxlib:symlink_files.bzl", "symlink_inputs")
 load("@pybind11_bazel//:build_defs.bzl", "pybind_extension", "pybind_library")
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
@@ -224,12 +235,14 @@ cc_library(
         "Passes/*.h",
         "deps/include/*.h",
     ]),
+    # copts = asan_copts + [
     copts = [
         "-Werror=unused-variable",
         "-Werror=unused-but-set-variable",
         "-Werror=return-type",
         "-Werror=unused-result",
     ],
+    # linkopts = asan_linkopts,
     deps = [
         ":EnzymeXLAPassesIncGen",
         ":EnzyeHLOPatternsIncGen",
@@ -344,7 +357,7 @@ pybind_library(
         "@tsl//tsl/protobuf:histogram_proto_cc",
         "@tsl//tsl/protobuf:histogram_proto_cc_impl",
         "@tsl//tsl/protobuf:protos_all_cc_impl",
-
+ 
         # This is similar to xla_binary rule and is needed to make XLA client compile.
         "@xla//xla:autotune_results_proto_cc",
         "@xla//xla:autotune_results_proto_cc_impl",

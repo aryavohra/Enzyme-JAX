@@ -243,13 +243,13 @@ def forward(x, config, weights, key_cache, value_cache):
 class Llama(absltest.TestCase):
     def test_llama_random(self):
         config = {
-            "dim": 18,
-            "hidden_dim": 18,
-            "n_layers": 1,
-            "n_heads": 1,
-            "n_kv_heads": 1,
-            "vocab_size": 8,
-            "seq_len": 8,
+            "dim": 288,
+            "hidden_dim": 768,
+            "n_layers": 6,
+            "n_heads": 6,
+            "n_kv_heads": 6,
+            "vocab_size": 32000,
+            "seq_len": 256,
         }
 
         n_layers = config["n_layers"]

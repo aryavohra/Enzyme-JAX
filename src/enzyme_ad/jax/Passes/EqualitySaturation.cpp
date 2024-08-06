@@ -646,7 +646,6 @@ namespace {
       OpBuilder &builder,
       Box<tensat::CppGraphConverter> &graph) {
       // std::cout << "DFS AT " << op->getName().getStringRef().str() << "\n";
-
       if (opToTensorInfo->find(op) != opToTensorInfo->end()) {
         return opToTensorInfo->at(op);
       }
@@ -685,13 +684,13 @@ namespace {
         auto shape_array = castArrayRefToInt32(output_tensor.getShape());
 	      auto shape = rust::Slice<const int>{ shape_array.data(), shape_array.size() };
         tensorInfo = graph->new_div_op(*handleOperandPartial(div.getLhs()), *handleOperandPartial(div.getRhs()), shape).into_raw();
-      } else if (isa<stablehlo::AddOp>(op)) {
+      } /*else if (isa<stablehlo::AddOp>(op)) {
         auto add = cast<stablehlo::AddOp>(op);
         auto output_tensor = add->getResult(0).getType().cast<TensorType>();
         auto shape_array = castArrayRefToInt32(output_tensor.getShape());
 	      auto shape = rust::Slice<const int>{ shape_array.data(), shape_array.size() };
         tensorInfo = graph->new_add_op(*handleOperandPartial(add.getLhs()), *handleOperandPartial(add.getRhs()), shape).into_raw();
-      } else if (isa<stablehlo::MinOp>(op)) {
+      } */ else if (isa<stablehlo::MinOp>(op)) {
         auto min = cast<stablehlo::MinOp>(op);
         auto output_tensor = min->getResult(0).getType().cast<TensorType>();
         auto shape_array = castArrayRefToInt32(output_tensor.getShape());
@@ -728,7 +727,7 @@ namespace {
           permutation.data(), static_cast<size_t>(permutation.size())};
         auto output_shape = castArrayRefToInt32(transpose->getResult(0).getType().cast<TensorType>().getShape());
 	      auto output_shape_slice = rust::Slice<const int> {
-		output_shape.data(), output_shape.size() };
+		      output_shape.data(), output_shape.size() };
         tensorInfo = graph->new_transpose_op(
           *handleOperandPartial(transpose.getOperand()),
           permutation_slice,
@@ -861,8 +860,7 @@ namespace {
         }
         auto output_tensor = op->getResult(0).getType().cast<TensorType>();
         std::vector<tensat::TensorInfo*> processedOperands;
-        auto copy = OperationTimer::cloneOpInContext(builder, op);
-        // auto copy = op->clone();
+        auto copy = op->clone(Operation::CloneOptions(/* cloneRegions = */ true, /* cloneOperands = */ false));
         blackboxIDToTensorInfo->push_back(copy);
         int blackboxOpID = blackboxIDToTensorInfo->size()-1;
         for (size_t i = 0; i < numOperands; i++) {
@@ -1049,21 +1047,22 @@ namespace {
           auto inputs = parseOpVec(opVals, nodes[node.operands[0]]);
           newOp = builder.create<func::ReturnOp>(location, inputs);          
         } else if (node.name == "blackbox") {
+          assert(node.operands.size() > 0);
           size_t numOperands = node.operands.size() - 1;
+          assert(nodes[node.operands[numOperands]].name == "Num");
           auto blackboxID = nodes[node.operands[numOperands]].operands[0];
           newOp = blackboxIDToTensorInfo->at(blackboxID);
           assert(numOperands == newOp->getNumOperands());
     
           // Really subtle error arose here from not handling Num properly.
           // We might want to have a Num hashmap 
+          std::vector<Value> operands;
           for (size_t i = 0; i < numOperands; ++i) {
             auto operandIndex = node.operands[i];
             auto operand = opVals[operandIndex];
-            newOp->setOperand(i, operand);
+            operands.push_back(operand);
           }
-    
-          // Do we need to account for insertion points at all?
-          builder.insert(newOp);
+          newOp->insertOperands(0, operands);
         } else {
           // TODO: implement other operations
           std::cout << "UNIMPLEMENTED " << node.name << "\n";
