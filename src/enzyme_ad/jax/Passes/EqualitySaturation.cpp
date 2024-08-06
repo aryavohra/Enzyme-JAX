@@ -547,22 +547,22 @@ namespace {
       return -1;
     }
 
-    tensat::TensorInfo* handleOperand(
+    int handleOperand(
         Value &operand,
-        std::unordered_map<Operation*, tensat::TensorInfo*> *opToTensorInfo,
-        std::unordered_map<int, tensat::TensorInfo*> *blockArgToTensorInfo,
-        std::vector<Operation*> *blackboxIDToTensorInfo,
+        std::unordered_map<Operation*, int> *opToTensorInfo,
+        std::unordered_map<int, int> *blockArgToTensorInfo,
+        std::vector<Operation*> *blackboxIndexToOperation,
         OpBuilder &builder,
         Box<tensat::CppGraphConverter> &graph) {
       if (auto defOp = operand.getDefiningOp()) {
         // Use existing TensorInfo if already processed
         int index = getValueIndex(defOp, operand);
         assert(index >= 0);
-        auto convertedOperand = dfs(defOp, opToTensorInfo, blockArgToTensorInfo, blackboxIDToTensorInfo, builder, graph);
+        auto convertedOperand = dfs(defOp, opToTensorInfo, blockArgToTensorInfo, blackboxIndexToOperation, builder, graph);
         if (index == 0) {
           return convertedOperand;
         } else {
-          auto indexOperand = graph->new_index(index, *convertedOperand).into_raw();
+          auto indexOperand = graph->new_index(index, convertedOperand);
           opToTensorInfo->insert({defOp, indexOperand});
           return indexOperand;
         }
@@ -570,16 +570,16 @@ namespace {
         // Handle BlockArguments which represent function parameters
         if (isa<TensorType>(operand.getType())) {
           int32_t block_arg_number = arg.getArgNumber();
-          auto &tensorInfo = (*blockArgToTensorInfo)[block_arg_number];
-          if (!tensorInfo) {
+          auto tensorId = (*blockArgToTensorInfo)[block_arg_number];
+          if (!tensorId) {
             auto shape = operand.getType().cast<TensorType>().getShape();
             auto dims = castArrayRefToInt32(shape);
-            auto input_slice = rust::Slice<const int32_t>{
-              dims.data(), static_cast<size_t>(dims.size())};
-            tensorInfo = graph->new_input(block_arg_number, input_slice).into_raw();
-            (*blockArgToTensorInfo)[block_arg_number] = tensorInfo;
+            rust::Vec<int> input_slice;
+            std::copy(dims.begin(), dims.end(), std::back_inserter(input_slice));
+            tensorId = graph->new_input(block_arg_number, input_slice);
+            (*blockArgToTensorInfo)[block_arg_number] = tensorId;
           }
-          return tensorInfo;
+          return tensorId;
         } else {
           std::cout
             << "EqualitySaturationPass does not support this argument type!"
@@ -594,55 +594,10 @@ namespace {
       assert(false);
     }
 
-// // Handle integral types, simply return the operand as-is
-// template<typename T>
-// typename std::enable_if<std::is_integral<T>::value, T>::type
-// handleOperand(T operand, std::unordered_map<Operation*, tensat::TensorInfo*> *opToTensorInfo,
-//               std::unordered_map<int, tensat::TensorInfo*> *blockArgToTensorInfo,
-//               std::vector<Operation*> *blackboxIDToTensorInfo,
-//               OpBuilder &builder, 
-//               Box<tensat::CppGraphConverter> &graph) {
-//     return operand;
-// }
-
-    // Handle rust::Slice<const int> directly, assuming we can pass it through without modification
-    std::unique_ptr<rust::Slice<int>> handleOperand(
-        std::unique_ptr<rust::Slice<int>> operand,
-        std::unordered_map<Operation*, tensat::TensorInfo*> *opToTensorInfo,
-        std::unordered_map<int, tensat::TensorInfo*> *blockArgToTensorInfo,
-        std::vector<Operation*> *blackboxIDToTensorInfo,
-        OpBuilder &builder, 
-        Box<tensat::CppGraphConverter> &graph) {
-        return operand;
-    }
-
-    template <typename CreateOpFunc, typename... Args>
-    tensat::TensorInfo* handleOperation(
-        Operation* op,
-        CreateOpFunc createOpFunc,
-        std::unordered_map<Operation*, tensat::TensorInfo*> *opToTensorInfo,
-        std::unordered_map<int, tensat::TensorInfo*> *blockArgToTensorInfo,
-        std::vector<Operation*> *blackboxIDToTensorInfo,
-        OpBuilder &builder,
-        Box<tensat::CppGraphConverter> &graph,
-        Args&&... args) {
-      auto args_tuple = std::forward_as_tuple(std::forward<Args>(args)...);
-      auto handleArgs = [&](auto&&... operands) {
-        return std::make_tuple(handleOperand(operands, opToTensorInfo, blockArgToTensorInfo, blackboxIDToTensorInfo, builder, graph)...);
-      };
-
-      auto operandInfos = std::apply(handleArgs, args_tuple);
-
-      // Use std::apply to unpack operandInfos into the function call
-      return std::apply([&](auto&&... unpacked) {
-        return std::invoke(createOpFunc, *graph, *unpacked...).into_raw();
-      }, operandInfos);
-    }
-
-    tensat::TensorInfo *dfs(Operation* op,
-      std::unordered_map<Operation*, tensat::TensorInfo*> *opToTensorInfo,
-      std::unordered_map<int, tensat::TensorInfo*> *blockArgToTensorInfo,
-      std::vector<Operation*> *blackboxIDToTensorInfo,
+    int dfs(Operation* op,
+      std::unordered_map<Operation*, int> *opToTensorInfo,
+      std::unordered_map<int, int> *blockArgToTensorInfo,
+      std::vector<Operation*> *blackboxIndexToOperation,
       OpBuilder &builder,
       Box<tensat::CppGraphConverter> &graph) {
       // std::cout << "DFS AT " << op->getName().getStringRef().str() << "\n";
@@ -650,14 +605,10 @@ namespace {
       if (opToTensorInfo->find(op) != opToTensorInfo->end()) {
         return opToTensorInfo->at(op);
       }
-      tensat::TensorInfo *tensorInfo = nullptr;
+      int tensorInfo = -1;
       auto handleOperandPartial = [&](auto operand) {
-        return handleOperand(operand, opToTensorInfo, blockArgToTensorInfo, blackboxIDToTensorInfo, builder, graph); 
+        return handleOperand(operand, opToTensorInfo, blockArgToTensorInfo, blackboxIndexToOperation, builder, graph); 
       };
-      // auto handleOperationPartial = [&](auto&& createOpFunc, auto&&... operands) {
-      //   return handleOperation(op, createOpFunc, opToTensorInfo, blockArgToTensorInfo, blackboxIDToTensorInfo, builder, graph, std::forward<decltype(operands)>(operands)...);
-      // }; 
-
       /*
       if (isa<stablehlo::ConstantOp>(op)) {
         auto constant = cast<stablehlo::ConstantOp>(op);
@@ -665,75 +616,74 @@ namespace {
         auto shape_array = castArrayRefToInt32(output_tensor.getShape());
 	auto shape = rust::Slice<const int>{ shape_array.data(), shape_array.size() };
 
-        tensorInfo = graph->new_constant_op(shape).into_raw();
+        tensorInfo = graph->new_constant_op(shape);
       } */
       if (isa<stablehlo::MulOp>(op)) {
         auto mul = cast<stablehlo::MulOp>(op);
         auto output_tensor = mul->getResult(0).getType().cast<TensorType>();
         auto shape_array = castArrayRefToInt32(output_tensor.getShape());
-	      auto shape = rust::Slice<const int>{ shape_array.data(), shape_array.size() };
-        tensorInfo = graph->new_mul_op(*handleOperandPartial(mul.getLhs()), *handleOperandPartial(mul.getRhs()), shape).into_raw();
+        auto shape = rust::Slice<const int>{ shape_array.data(), shape_array.size() };
+        tensorInfo = graph->new_mul_op(handleOperandPartial(mul.getLhs()), handleOperandPartial(mul.getRhs()), shape);
       } else if (isa<stablehlo::SubtractOp>(op)) {
         auto subtract = cast<stablehlo::SubtractOp>(op);
         auto output_tensor = subtract->getResult(0).getType().cast<TensorType>();
         auto shape_array = castArrayRefToInt32(output_tensor.getShape());
-	      auto shape = rust::Slice<const int>{ shape_array.data(), shape_array.size() };
-        tensorInfo = graph->new_subtract_op(*handleOperandPartial(subtract.getLhs()), *handleOperandPartial(subtract.getRhs()), shape).into_raw();
+        auto shape = rust::Slice<const int>{ shape_array.data(), shape_array.size() };
+        tensorInfo = graph->new_subtract_op(handleOperandPartial(subtract.getLhs()), handleOperandPartial(subtract.getRhs()), shape);
       } else if (isa<stablehlo::DivOp>(op)) {
         auto div = cast<stablehlo::DivOp>(op);
         auto output_tensor = div->getResult(0).getType().cast<TensorType>();
         auto shape_array = castArrayRefToInt32(output_tensor.getShape());
-	      auto shape = rust::Slice<const int>{ shape_array.data(), shape_array.size() };
-        tensorInfo = graph->new_div_op(*handleOperandPartial(div.getLhs()), *handleOperandPartial(div.getRhs()), shape).into_raw();
-      } else if (isa<stablehlo::AddOp>(op)) {
-        auto add = cast<stablehlo::AddOp>(op);
-        auto output_tensor = add->getResult(0).getType().cast<TensorType>();
-        auto shape_array = castArrayRefToInt32(output_tensor.getShape());
-	      auto shape = rust::Slice<const int>{ shape_array.data(), shape_array.size() };
-        tensorInfo = graph->new_add_op(*handleOperandPartial(add.getLhs()), *handleOperandPartial(add.getRhs()), shape).into_raw();
+        auto shape = rust::Slice<const int>{ shape_array.data(), shape_array.size() };
+        tensorInfo = graph->new_div_op(handleOperandPartial(div.getLhs()), handleOperandPartial(div.getRhs()), shape);
+      // } else if (isa<stablehlo::AddOp>(op)) {
+      //   auto add = cast<stablehlo::AddOp>(op);
+      //   auto output_tensor = add->getResult(0).getType().cast<TensorType>();
+      //   auto shape_array = castArrayRefToInt32(output_tensor.getShape());
+	     //  auto shape = rust::Slice<const int>{ shape_array.data(), shape_array.size() };
+      //   tensorInfo = graph->new_add_op(handleOperandPartial(add.getLhs()), handleOperandPartial(add.getRhs()), shape);
       } else if (isa<stablehlo::MinOp>(op)) {
         auto min = cast<stablehlo::MinOp>(op);
         auto output_tensor = min->getResult(0).getType().cast<TensorType>();
         auto shape_array = castArrayRefToInt32(output_tensor.getShape());
-	      auto shape = rust::Slice<const int>{ shape_array.data(), shape_array.size() };
-        tensorInfo = graph->new_min_op(*handleOperandPartial(min.getLhs()), *handleOperandPartial(min.getRhs()), shape).into_raw();
+        auto shape = rust::Slice<const int>{ shape_array.data(), shape_array.size() };
+        tensorInfo = graph->new_min_op(handleOperandPartial(min.getLhs()), handleOperandPartial(min.getRhs()), shape);
       } else if (isa<stablehlo::MaxOp>(op)) {
         auto max = cast<stablehlo::MaxOp>(op);
         auto output_tensor = max->getResult(0).getType().cast<TensorType>();
         auto shape_array = castArrayRefToInt32(output_tensor.getShape());
-	      auto shape = rust::Slice<const int>{ shape_array.data(), shape_array.size() };
-        tensorInfo = graph->new_max_op(*handleOperandPartial(max.getLhs()), *handleOperandPartial(max.getRhs()), shape).into_raw();
+        auto shape = rust::Slice<const int>{ shape_array.data(), shape_array.size() };
+        tensorInfo = graph->new_max_op(handleOperandPartial(max.getLhs()), handleOperandPartial(max.getRhs()), shape);
       } else if (isa<stablehlo::TanhOp>(op)) {
         auto tanh = cast<stablehlo::TanhOp>(op);
         auto output_tensor = tanh->getResult(0).getType().cast<TensorType>();
         auto shape_array = castArrayRefToInt32(output_tensor.getShape());
-	      auto shape = rust::Slice<const int>{ shape_array.data(), shape_array.size() };
-        tensorInfo = graph->new_tanh_op(*handleOperandPartial(tanh.getOperand()), shape).into_raw();
+        auto shape = rust::Slice<const int>{ shape_array.data(), shape_array.size() };
+        tensorInfo = graph->new_tanh_op(handleOperandPartial(tanh.getOperand()), shape);
       } else if (isa<stablehlo::NegOp>(op)) {
         auto neg = cast<stablehlo::NegOp>(op);
         auto output_tensor = neg->getResult(0).getType().cast<TensorType>();
         auto shape_array = castArrayRefToInt32(output_tensor.getShape());
-	      auto shape = rust::Slice<const int>{ shape_array.data(), shape_array.size() };
-        tensorInfo = graph->new_neg_op(*handleOperandPartial(neg.getOperand()), shape).into_raw();
+        auto shape = rust::Slice<const int>{ shape_array.data(), shape_array.size() };
+        tensorInfo = graph->new_neg_op(handleOperandPartial(neg.getOperand()), shape);
       } else if (isa<stablehlo::ExpOp>(op)) {
         auto exp = cast<stablehlo::ExpOp>(op);
         auto output_tensor = exp->getResult(0).getType().cast<TensorType>();
         auto shape_array = castArrayRefToInt32(output_tensor.getShape());
-	      auto shape = rust::Slice<const int>{ shape_array.data(), shape_array.size() };
-        tensorInfo = graph->new_exp_op(*handleOperandPartial(exp.getOperand()), shape).into_raw();
+        auto shape = rust::Slice<const int>{ shape_array.data(), shape_array.size() };
+        tensorInfo = graph->new_exp_op(handleOperandPartial(exp.getOperand()), shape);
       } else if (isa<stablehlo::TransposeOp>(op)) {
         auto transpose = cast<stablehlo::TransposeOp>(op);
         std::vector<int32_t> permutation = castArrayRefToInt32(transpose.getPermutation());
         auto permutation_slice = rust::Slice<const int> {
           permutation.data(), static_cast<size_t>(permutation.size())};
         auto output_shape = castArrayRefToInt32(transpose->getResult(0).getType().cast<TensorType>().getShape());
-	      auto output_shape_slice = rust::Slice<const int> {
-		output_shape.data(), output_shape.size() };
+        auto output_shape_slice = rust::Slice<const int> { output_shape.data(), output_shape.size() };
         tensorInfo = graph->new_transpose_op(
-          *handleOperandPartial(transpose.getOperand()),
+          handleOperandPartial(transpose.getOperand()),
           permutation_slice,
           output_shape_slice
-        ).into_raw();
+        );
       } else if (isa<stablehlo::ReshapeOp>(op)) {
         auto reshape = cast<stablehlo::ReshapeOp>(op);
         if (auto output_tensor = reshape.getResult().getType().cast<TensorType>()) {
@@ -741,9 +691,9 @@ namespace {
           auto output_shape_slice = rust::Slice<const int> {
             shape.data(), shape.size()};
           tensorInfo = graph->new_reshape_op(
-            *handleOperandPartial(reshape.getOperand()),
+            handleOperandPartial(reshape.getOperand()),
             output_shape_slice
-          ).into_raw();
+          );
         } else {
           std::cout << "EqualitySaturationPass: result of stablehlo::ReshapeOp has non-tensor type" << std::endl;
         }
@@ -757,7 +707,7 @@ namespace {
           tensorInfo = graph->new_iota_op(
             iota_dimension,
             output_shape_slice
-          ).into_raw();
+          );
         } else {
           std::cout << "EqualitySaturationPass: result of stablehlo::IotaOp has non-tensor type" << std::endl;
         }
@@ -797,15 +747,15 @@ namespace {
             shape.data(), shape.size()};
 
           tensorInfo = graph->new_dot_general_op(
-            *handleOperandPartial(dot_general.getLhs()),
-            *handleOperandPartial(dot_general.getRhs()),
+            handleOperandPartial(dot_general.getLhs()),
+            handleOperandPartial(dot_general.getRhs()),
             {lhs_batch_dim.data(), lhs_batch_dim.size()},
             {rhs_batch_dim.data(), rhs_batch_dim.size()},
             {lhs_contract_dim.data(), lhs_contract_dim.size()},
             {rhs_contract_dim.data(), rhs_contract_dim.size()},
             precision_config_slice,
             output_shape_slice
-          ).into_raw();
+          );
         } else {
           std::cout << "EqualitySaturationPass: result of stablehlo::DotGeneralOp has non-tensor type" << std::endl;
         }
@@ -813,44 +763,44 @@ namespace {
         auto concat = cast<stablehlo::ConcatenateOp>(op);
         auto output_tensor = concat->getResult(0).getType().cast<TensorType>();
         auto output_shape_array = castArrayRefToInt32(output_tensor.getShape());
-        std::vector<tensat::TensorInfo*> inputs;
+        std::vector<int> inputs;
         for (auto input : concat.getInputs()) {
           inputs.push_back(handleOperandPartial(input));
         }
         int32_t dimension = concat.getDimension();
+        rust::Vec<int> input_slice;
+        std::copy(inputs.begin(), inputs.end(), std::back_inserter(input_slice));
         tensorInfo = graph->new_concatenate_op(
-          { inputs.data(), inputs.size() },
+          input_slice,
           dimension,
           { output_shape_array.data(), output_shape_array.size() }
-        ).into_raw();
+        );
       } else if (isa<stablehlo::SliceOp>(op)) {
         auto slice = cast<stablehlo::SliceOp>(op);
         auto output_tensor = slice->getResult(0).getType().cast<TensorType>();
         auto output_shape_array = castArrayRefToInt32(output_tensor.getShape());
-        std::vector<tensat::TensorInfo*> inputs;
         auto operand = handleOperandPartial(slice.getOperand());
         auto start_indices = castArrayRefToInt32(slice.getStartIndices());
         auto limit_indices = castArrayRefToInt32(slice.getLimitIndices());
         auto strides = castArrayRefToInt32(slice.getStrides());
         tensorInfo = graph->new_slice_op(
-          *operand,
+          operand,
           { start_indices.data(), start_indices.size() },
           { limit_indices.data(), limit_indices.size() },
           { strides.data(), strides.size() },
           { output_shape_array.data(), output_shape_array.size() }
-        ).into_raw();
+        );
       } else if (isa<func::ReturnOp>(op)) {
         rust::vec<tensat::Shape> shapes;
         int numOperands = op->getNumOperands();
-        std::vector<tensat::TensorInfo *> processedOperands;
+        std::vector<int> processedOperands;
         for (size_t i = 0; i < numOperands; i++) {
           auto operand = handleOperandPartial(op->getOperand(i));
           processedOperands.push_back(operand);
         }
-        auto operandPtrsSlice = rust::Slice<tensat::TensorInfo *const>{
-            processedOperands.data(),
-            static_cast<size_t>(processedOperands.size())};
-        tensorInfo = graph->new_return_op(operandPtrsSlice).into_raw();
+        rust::Vec<int> operandPtrsSlice;
+        std::copy(processedOperands.begin(), processedOperands.end(), std::back_inserter(operandPtrsSlice));
+        tensorInfo = graph->new_return_op(operandPtrsSlice);
       } else {
         int numOperands = op->getNumOperands();
         rust::vec<tensat::Shape> shapes;
@@ -860,23 +810,23 @@ namespace {
           shapes.push_back(tensat::Shape {shape_array});
         }
         auto output_tensor = op->getResult(0).getType().cast<TensorType>();
-        std::vector<tensat::TensorInfo*> processedOperands;
+        std::vector<int> processedOperands;
         auto copy = OperationTimer::cloneOpInContext(builder, op);
-        // auto copy = op->clone();
-        blackboxIDToTensorInfo->push_back(copy);
-        int blackboxOpID = blackboxIDToTensorInfo->size()-1;
+        blackboxIndexToOperation->push_back(copy);
+        int blackboxOpID = blackboxIndexToOperation->size()-1;
         for (size_t i = 0; i < numOperands; i++) {
           auto operand = handleOperandPartial(op->getOperand(i));
           processedOperands.push_back(operand);
         }
-        auto operandPtrsSlice = rust::Slice<tensat::TensorInfo* const>{processedOperands.data(), static_cast<size_t>(processedOperands.size())};
+        rust::Vec<int> operandPtrsSlice;
+        std::copy(processedOperands.begin(), processedOperands.end(), std::back_inserter(operandPtrsSlice));
         tensorInfo = graph->new_blackbox_op(
           operandPtrsSlice,
           blackboxOpID,
           shapes
-        ).into_raw();
+        );
       }
-      if (tensorInfo != nullptr) {
+      if (tensorInfo != -1) {
         opToTensorInfo->insert({op, tensorInfo});
         return tensorInfo;
       }
@@ -884,17 +834,17 @@ namespace {
     }
 
     Box<tensat::CppGraphConverter> createEgraph(
-        std::vector<Operation*> *blackboxIDToTensorInfo,
+        std::vector<Operation*> *blackboxIndexToOperation,
         OpBuilder &builder,
         ModuleOp module) {
 
       auto graph = tensat::new_converter();
       // members of the class
-      std::unordered_map<Operation*, tensat::TensorInfo*> opToTensorInfo;
-      std::unordered_map<int, tensat::TensorInfo*> blockArgToTensorInfo;
+      std::unordered_map<Operation*, int> opToTensorInfo;
+      std::unordered_map<int, int> blockArgToTensorInfo;
 
       module.walk([&](func::ReturnOp op) {
-        dfs(op, &opToTensorInfo, &blockArgToTensorInfo, blackboxIDToTensorInfo, builder, graph);
+        dfs(op, &opToTensorInfo, &blockArgToTensorInfo, blackboxIndexToOperation, builder, graph);
       });
 
       graph->print_rec_expr();
@@ -944,7 +894,7 @@ namespace {
    }
 
 
-    void reconstructStablehlo(ModuleOp *root, std::vector<Operation*> *blackboxIDToTensorInfo, rust::vec<tensat::Node> &nodes, OpBuilder &builder) {
+    void reconstructStablehlo(ModuleOp *root, std::vector<Operation*> *blackboxIndexToOperation, rust::vec<tensat::Node> &nodes, OpBuilder &builder) {
       auto context = root->getContext();
       std::vector<Value> opVals;
 
@@ -1051,7 +1001,7 @@ namespace {
         } else if (node.name == "blackbox") {
           size_t numOperands = node.operands.size() - 1;
           auto blackboxID = nodes[node.operands[numOperands]].operands[0];
-          newOp = blackboxIDToTensorInfo->at(blackboxID);
+          newOp = blackboxIndexToOperation->at(blackboxID);
           assert(numOperands == newOp->getNumOperands());
     
           // Really subtle error arose here from not handling Num properly.
@@ -1085,14 +1035,14 @@ namespace {
       ModuleOp module = getOperation();
       std::cout << "ORIGINAL MODULE" << "\n";
       module.dump();
-      std::vector<Operation*> blackboxIDToTensorInfo;
+      std::vector<Operation*> blackboxIndexToOperation;
       auto context = module->getContext();
       OpBuilder builder(context);
-      auto graph = createEgraph(&blackboxIDToTensorInfo, builder, module);
+      auto graph = createEgraph(&blackboxIndexToOperation, builder, module);
       auto optimized = graph->optimize();
 
       std::cout << "reconstructing\n";
-      reconstructStablehlo(&module, &blackboxIDToTensorInfo, optimized, builder);
+      reconstructStablehlo(&module, &blackboxIndexToOperation, optimized, builder);
       std::cout << "SUPEROPTIMIZED MODULE" << "\n";
       module.dump();
     }

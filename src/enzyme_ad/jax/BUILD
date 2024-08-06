@@ -1,3 +1,14 @@
+asan_copts = [
+    "-fsanitize=address",
+    "-fno-omit-frame-pointer",
+    "-fno-optimize-sibling-calls",
+    "-O1",
+]
+
+asan_linkopts = [
+    "-fsanitize=address",
+]
+
 load("@jax//jaxlib:symlink_files.bzl", "symlink_inputs")
 load("@pybind11_bazel//:build_defs.bzl", "pybind_extension", "pybind_library")
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
@@ -110,6 +121,8 @@ cc_library(
     name = "TransformOps",
     srcs = glob(["TransformOps/*.cpp"]),
     hdrs = glob(["TransformOps/*.h"]),
+    copts = asan_copts,
+    linkopts = asan_linkopts,
     deps = [
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
@@ -224,12 +237,13 @@ cc_library(
         "Passes/*.h",
         "deps/include/*.h",
     ]),
-    copts = [
+    copts = asan_copts + [
         "-Werror=unused-variable",
         "-Werror=unused-but-set-variable",
         "-Werror=return-type",
         "-Werror=unused-result",
     ],
+    linkopts = asan_linkopts,
     deps = [
         ":EnzymeXLAPassesIncGen",
         ":EnzyeHLOPatternsIncGen",
@@ -478,6 +492,8 @@ rust_binary(
 cc_library(
     name = "equality_saturation",
     hdrs = ["Passes/EqualitySaturation.h"],
+    copts = asan_copts,
+    linkopts = asan_linkopts,
     deps = [
         ":cxx_core",
         "@llvm-project//mlir:IR",
@@ -503,12 +519,16 @@ genrule(
 cc_library(
     name = "cxx_core",
     hdrs = ["cxx.h"],
+    copts = asan_copts,
+    linkopts = asan_linkopts,
     include_prefix = "rust",
 )
 
 cc_binary(
     name = "graphtest",
     visibility = ["//visibility:public"],
+    copts = asan_copts,
+    linkopts = asan_linkopts,
     srcs = ["deps/tensat/src/graph.cc"],
     deps = [
         ":tensat_bridge",
