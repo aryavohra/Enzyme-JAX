@@ -895,7 +895,7 @@ namespace {
         dfs(op, &opToTensorInfo, &blockArgToTensorInfo, blackboxIDToTensorInfo, builder, graph);
       });
 
-      graph->print_rec_expr();
+      // graph->print_rec_expr();
       return graph;
     }
 
@@ -1082,18 +1082,18 @@ namespace {
 
     void runOnOperation() override {
       ModuleOp module = getOperation();
-      std::cout << "ORIGINAL MODULE" << "\n";
-      module.dump();
+      // std::cout << "ORIGINAL MODULE" << "\n";
+      // module.dump();
       std::vector<Operation*> blackboxIDToTensorInfo;
       auto context = module->getContext();
       OpBuilder builder(context);
       auto graph = createEgraph(&blackboxIDToTensorInfo, builder, module);
       auto optimized = graph->optimize();
 
-      std::cout << "reconstructing\n";
+      // std::cout << "reconstructing\n";
       reconstructStablehlo(&module, &blackboxIDToTensorInfo, optimized, builder);
-      std::cout << "SUPEROPTIMIZED MODULE" << "\n";
-      module.dump();
+      std::cout << "Optimised module" << "\n";
+      // module.dump();
     }
   };
 }  // end anonymous namespace

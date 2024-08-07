@@ -8,6 +8,299 @@ import timeit
 
 argv = ("-I/usr/include/c++/11", "-I/usr/include/x86_64-linux-gnu/c++/11")
 
+massive_pipeline = enzyme_jax.JaXPipeline("""
+builtin.module(
+inline{default-pipeline=canonicalize max-iterations=4},
+canonicalize,cse,
+canonicalize,
+enzyme-hlo-generate-td{
+patterns=
+compare_op_canon<16>;
+broadcast_in_dim_op_canon<16>;
+convert_op_canon<16>;
+dynamic_broadcast_in_dim_op_not_actually_dynamic<16>;
+chained_dynamic_broadcast_in_dim_canonicalization<16>;
+dynamic_broadcast_in_dim_all_dims_non_expanding<16>;
+noop_reduce_op_canon<16>;
+empty_reduce_op_canon<16>;
+dynamic_reshape_op_canon<16>;
+get_tuple_element_op_canon<16>;
+real_op_canon<16>;
+imag_op_canon<16>;
+get_dimension_size_op_canon<16>;
+gather_op_canon<16>;
+reshape_op_canon<16>;
+merge_consecutive_reshapes<16>;
+transpose_is_reshape<16>;
+zero_extent_tensor_canon<16>;
+reorder_elementwise_and_shape_op<16>;
+cse_broadcast_in_dim<16>;
+cse_slice<16>;
+cse_transpose<16>;
+cse_convert<16>;
+cse_pad<16>;
+cse_dot_general<16>;
+cse_reshape<16>;
+cse_mul<16>;
+cse_div<16>;
+cse_add<16>;
+cse_subtract<16>;
+cse_min<16>;
+cse_max<16>;
+cse_neg<16>;
+cse_concatenate<16>;
+concatenate_op_canon<16>(1024);
+select_op_canon<16>(1024);
+add_simplify<16>;
+sub_simplify<16>;
+and_simplify<16>;
+max_simplify<16>;
+min_simplify<16>;
+or_simplify<16>;
+negate_simplify<16>;
+mul_simplify<16>;
+div_simplify<16>;
+rem_simplify<16>;
+pow_simplify<16>;
+sqrt_simplify<16>;
+cos_simplify<16>;
+sin_simplify<16>;
+noop_slice<16>;
+const_prop_through_barrier<16>;
+slice_slice<16>;
+shift_right_logical_simplify<16>;
+pad_simplify<16>;
+negative_pad_to_slice<16>;
+tanh_simplify<16>;
+exp_simplify<16>;
+slice_simplify<16>;
+convert_simplify<16>;
+reshape_simplify<16>;
+dynamic_slice_to_static<16>;
+dynamic_update_slice_elim<16>;
+concat_to_broadcast<16>;
+reduce_to_reshape<16>;
+broadcast_to_reshape<16>;
+gather_simplify<16>;
+iota_simplify<16>(1024);
+broadcast_in_dim_simplify<16>(1024);
+convert_concat<1>;
+dynamic_update_to_concat<1>;
+slice_of_dynamic_update<1>;
+slice_elementwise<1>;
+slice_pad<1>;
+dot_reshape_dot<1>;
+concat_const_prop<1>;
+concat_fuse<1>;
+pad_reshape_pad<1>;
+pad_pad<1>;
+concat_push_binop_add<1>;
+concat_push_binop_mul<1>;
+scatter_to_dynamic_update_slice<1>;
+reduce_concat<1>;
+slice_concat<1>;
+bin_broadcast_splat_add<1>;
+bin_broadcast_splat_subtract<1>;
+bin_broadcast_splat_div<1>;
+bin_broadcast_splat_mul<1>;
+reshape_iota<16>;
+slice_reshape_slice<1>;
+dot_general_simplify<16>;
+transpose_simplify<16>;
+reshape_empty_broadcast<1>;
+add_pad_pad_to_concat<1>;
+broadcast_reshape<1>;
+slice_reshape_concat<1>;
+slice_reshape_elementwise<1>;
+slice_reshape_transpose<1>;
+slice_reshape_dot_general<1>;
+concat_pad<1>;
+reduce_pad<1>;
+broadcast_pad<1>;
+zero_product_reshape_pad<1>;
+mul_zero_pad<1>;
+div_zero_pad<1>;
+binop_const_reshape_pad<1>;
+binop_const_pad_add<1>;
+binop_const_pad_subtract<1>;
+binop_const_pad_mul<1>;
+binop_const_pad_div<1>;
+slice_reshape_pad<1>;
+binop_binop_pad_pad_add<1>;
+binop_binop_pad_pad_mul<1>;
+binop_pad_pad_add<1>;
+binop_pad_pad_subtract<1>;
+binop_pad_pad_mul<1>;
+binop_pad_pad_div<1>;
+binop_pad_pad_min<1>;
+binop_pad_pad_max<1>;
+unary_pad_push_convert<1>;
+unary_pad_push_tanh<1>;
+unary_pad_push_exp<1>;
+transpose_pad<1>;
+transpose_dot_reorder<1>;
+dot_transpose<1>;
+convert_convert_float<1>;
+concat_to_pad<1>;
+concat_appending_reshape<1>;
+reshape_iota<1>;
+broadcast_reduce<1>;
+slice_dot_general<1>;
+dot_reshape_pad<1>;
+pad_dot_general<1>(1);
+pad_dot_general<1>(0);
+},
+transform-interpreter,
+enzyme-hlo-remove-transform
+)""")
+
+massive_pipeline_with_eqsat = enzyme_jax.JaXPipeline("""
+inline{default-pipeline=canonicalize max-iterations=4},
+equality-saturation-pass,
+builtin.module(
+inline{default-pipeline=canonicalize max-iterations=4},
+canonicalize,cse,
+canonicalize,
+enzyme-hlo-generate-td{
+patterns=
+compare_op_canon<16>;
+broadcast_in_dim_op_canon<16>;
+convert_op_canon<16>;
+dynamic_broadcast_in_dim_op_not_actually_dynamic<16>;
+chained_dynamic_broadcast_in_dim_canonicalization<16>;
+dynamic_broadcast_in_dim_all_dims_non_expanding<16>;
+noop_reduce_op_canon<16>;
+empty_reduce_op_canon<16>;
+dynamic_reshape_op_canon<16>;
+get_tuple_element_op_canon<16>;
+real_op_canon<16>;
+imag_op_canon<16>;
+get_dimension_size_op_canon<16>;
+gather_op_canon<16>;
+reshape_op_canon<16>;
+merge_consecutive_reshapes<16>;
+transpose_is_reshape<16>;
+zero_extent_tensor_canon<16>;
+reorder_elementwise_and_shape_op<16>;
+cse_broadcast_in_dim<16>;
+cse_slice<16>;
+cse_transpose<16>;
+cse_convert<16>;
+cse_pad<16>;
+cse_dot_general<16>;
+cse_reshape<16>;
+cse_mul<16>;
+cse_div<16>;
+cse_add<16>;
+cse_subtract<16>;
+cse_min<16>;
+cse_max<16>;
+cse_neg<16>;
+cse_concatenate<16>;
+concatenate_op_canon<16>(1024);
+select_op_canon<16>(1024);
+add_simplify<16>;
+sub_simplify<16>;
+and_simplify<16>;
+max_simplify<16>;
+min_simplify<16>;
+or_simplify<16>;
+negate_simplify<16>;
+mul_simplify<16>;
+div_simplify<16>;
+rem_simplify<16>;
+pow_simplify<16>;
+sqrt_simplify<16>;
+cos_simplify<16>;
+sin_simplify<16>;
+noop_slice<16>;
+const_prop_through_barrier<16>;
+slice_slice<16>;
+shift_right_logical_simplify<16>;
+pad_simplify<16>;
+negative_pad_to_slice<16>;
+tanh_simplify<16>;
+exp_simplify<16>;
+slice_simplify<16>;
+convert_simplify<16>;
+reshape_simplify<16>;
+dynamic_slice_to_static<16>;
+dynamic_update_slice_elim<16>;
+concat_to_broadcast<16>;
+reduce_to_reshape<16>;
+broadcast_to_reshape<16>;
+gather_simplify<16>;
+iota_simplify<16>(1024);
+broadcast_in_dim_simplify<16>(1024);
+convert_concat<1>;
+dynamic_update_to_concat<1>;
+slice_of_dynamic_update<1>;
+slice_elementwise<1>;
+slice_pad<1>;
+dot_reshape_dot<1>;
+concat_const_prop<1>;
+concat_fuse<1>;
+pad_reshape_pad<1>;
+pad_pad<1>;
+concat_push_binop_add<1>;
+concat_push_binop_mul<1>;
+scatter_to_dynamic_update_slice<1>;
+reduce_concat<1>;
+slice_concat<1>;
+bin_broadcast_splat_add<1>;
+bin_broadcast_splat_subtract<1>;
+bin_broadcast_splat_div<1>;
+bin_broadcast_splat_mul<1>;
+reshape_iota<16>;
+slice_reshape_slice<1>;
+dot_general_simplify<16>;
+transpose_simplify<16>;
+reshape_empty_broadcast<1>;
+add_pad_pad_to_concat<1>;
+broadcast_reshape<1>;
+slice_reshape_concat<1>;
+slice_reshape_elementwise<1>;
+slice_reshape_transpose<1>;
+slice_reshape_dot_general<1>;
+concat_pad<1>;
+reduce_pad<1>;
+broadcast_pad<1>;
+zero_product_reshape_pad<1>;
+mul_zero_pad<1>;
+div_zero_pad<1>;
+binop_const_reshape_pad<1>;
+binop_const_pad_add<1>;
+binop_const_pad_subtract<1>;
+binop_const_pad_mul<1>;
+binop_const_pad_div<1>;
+slice_reshape_pad<1>;
+binop_binop_pad_pad_add<1>;
+binop_binop_pad_pad_mul<1>;
+binop_pad_pad_add<1>;
+binop_pad_pad_subtract<1>;
+binop_pad_pad_mul<1>;
+binop_pad_pad_div<1>;
+binop_pad_pad_min<1>;
+binop_pad_pad_max<1>;
+unary_pad_push_convert<1>;
+unary_pad_push_tanh<1>;
+unary_pad_push_exp<1>;
+transpose_pad<1>;
+transpose_dot_reorder<1>;
+dot_transpose<1>;
+convert_convert_float<1>;
+concat_to_pad<1>;
+concat_appending_reshape<1>;
+reshape_iota<1>;
+broadcast_reduce<1>;
+slice_dot_general<1>;
+dot_reshape_pad<1>;
+pad_dot_general<1>(1);
+pad_dot_general<1>(0);
+},
+transform-interpreter,
+enzyme-hlo-remove-transform
+)""")
 
 def rmsnorm(x, weight):
     ss = 1 / jnp.sqrt(x.dot(x) / x.shape[0] + 1e-5)
@@ -27,14 +320,7 @@ def sigmoid(x):
 def silu(x):
     return x * sigmoid(x)
 
-
-# Token is token value
 asserts = True
-
-pipeline = enzyme_jax.NewXLAPipeline(mlirad=True)
-pipeline = enzyme_jax.JaXPipeline()
-# pipeline = enzyme_jax.NewXLAPipeline(mlirad=False)
-
 
 def forward(x, config, weights, key_cache, value_cache):
     pos = key_cache.shape[1]
@@ -241,6 +527,10 @@ def forward(x, config, weights, key_cache, value_cache):
 
 
 class Llama(absltest.TestCase):
+    def somewhat_close(self, a, b, eps):
+        c = jnp.abs(a - b)
+        return jnp.max(c) < eps
+
     def test_llama_random(self):
         config = {
             "dim": 288,
@@ -306,178 +596,93 @@ class Llama(absltest.TestCase):
 
         func = partial(forward, config)
 
-        jfunc = jax.jit(func)
+        repeats = 5000
 
-        efunc = jax.jit(
-            enzyme_jax.enzyme_jax_ir(pipeline_options=pipeline)(func)
+        jax_func = jax.jit(func)
+        jax_res = jax_func(x, weights, key_cache, value_cache)
+
+        # enzyme_pipeline = enzyme_jax.NewXLAPipeline(mlirad=True)
+        # enzyme_pipeline = enzyme_jax.JaXPipeline()
+        enzyme_pipeline = enzyme_jax.OldXLAPipeline()
+        # enzyme_pipeline = enzyme_jax.NewXLAPipeline(mlirad=False)
+
+        enzyme_func = jax.jit(
+            enzyme_jax.enzyme_jax_ir(argv=argv, pipeline_options=enzyme_pipeline)(func)
         )
-
-        number = 100
-        if False:
-            eres = efunc(x, weights, key_cache, value_cache)
-            print("Enzyme primal", eres)
-            res = jfunc(x, weights, key_cache, value_cache)
-            print("Jax primal", res)
-            print(" max error", jnp.max(jnp.abs(eres - res)))
-            assert (jnp.abs(eres - res) < 1e-3).all()
-
-            print(
-                "Enzyme primal",
-                timeit.Timer(
-                    "efunc(x, weights, key_cache, value_cache)",
-                    globals={
-                        "efunc": efunc,
-                        "x": x,
-                        "weights": weights,
-                        "key_cache": key_cache,
-                        "value_cache": value_cache,
-                    },
-                ).timeit(number),
-            )
-            print(
-                "JaX primal",
-                timeit.Timer(
-                    "jfunc(x, weights, key_cache, value_cache)",
-                    globals={
-                        "jfunc": jfunc,
-                        "x": x,
-                        "weights": weights,
-                        "key_cache": key_cache,
-                        "value_cache": value_cache,
-                    },
-                ).timeit(number),
-            )
-        # jfunc = jax.jit(partial(forward, config))
-        # mlir = jax.jit(partial(forward, config)).lower(1, weights, key_cache, value_cache).compiler_ir(dialect="mhlo")
-
-        if False:
-
-            @jax.jit
-            def jfwd(x, dx, weights, dweights, kc, dkc, vc, dvc):
-                return jax.jvp(jfunc, (x, weights, kc, vc), (x, weights, dkc, dvc))
-
-            @jax.jit
-            def efwd(x, dx, weights, dweights, kc, dkc, vc, dvc):
-                return jax.jvp(efunc, (x, weights, kc, vc), (x, weights, dkc, dvc))
-
-            eres = efwd(
-                x, dx, weights, dweights, key_cache, key_cache, value_cache, value_cache
-            )
-            print("Enzyme fwd", eres)
-            jres = jfwd(
-                x, dx, weights, dweights, key_cache, key_cache, value_cache, value_cache
-            )
-            print("Jax fwd", jres)
-            print(
-                "Enzyme fwd",
-                timeit.Timer(
-                    "efwd(x, dx, weights, dweights, key_cache, key_cache, value_cache, value_cache)",
-                    globals={
-                        "efwd": efwd,
-                        "x": x,
-                        "dx": dx,
-                        "weights": weights,
-                        "dweights": dweights,
-                        "key_cache": key_cache,
-                        "value_cache": value_cache,
-                    },
-                ).timeit(number),
-            )
-            print(
-                "JaX fwd",
-                timeit.Timer(
-                    "jfwd(x, dx, weights, dweights, key_cache, key_cache, value_cache, value_cache)",
-                    globals={
-                        "jfwd": jfwd,
-                        "x": x,
-                        "dx": dx,
-                        "weights": weights,
-                        "dweights": dweights,
-                        "key_cache": key_cache,
-                        "value_cache": value_cache,
-                    },
-                ).timeit(number),
-            )
-
-        @jax.jit
-        def jrev(x, weights, kc, vc, dx, dkc, dvc):
-            primals, f_vjp = jax.vjp(jfunc, x, weights, kc, vc)
-            return f_vjp(dx)  # , dkc, dvc)
-        '''
-        @jax.jit
-        def erev(x, weights, kc, vc, dx, dkc, dvc):
-            primals, f_vjp = jax.vjp(efunc, x, weights, kc, vc)
-            return f_vjp(dx)  # , dkc, dvc)
-
-        eres = erev(x, weights, key_cache, value_cache, dx, dkc, dvc)
-        print("Enzyme rev", eres)
-        jres = jrev(x, weights, key_cache, value_cache, dx, dkc, dvc)
-        print("Jax rev", jres)
-        '''
-        jrev2 = jax.jit(
+        enzyme_res = enzyme_func(x, weights, key_cache, value_cache)
+        
+        eqsat_pipeline = enzyme_jax.JaXPipeline(
+            "inline{default-pipeline=canonicalize max-iterations=4},"
+            + "equality-saturation-pass,cse,canonicalize,cse"
+        )
+        eqsat_func = jax.jit(
             enzyme_jax.enzyme_jax_ir(
                 argv=argv,
-                pipeline_options=enzyme_jax.JaXPipeline(
-                    "inline{default-pipeline=canonicalize max-iterations=4},"
-                    + "canonicalize,cse,enzyme-hlo-opt,cse,equality-saturation-pass"
-                ),
-            )(jrev)
+                pipeline_options=eqsat_pipeline,
+            )(func)
         )
+        eqsat_res = eqsat_func(x, weights, key_cache, value_cache)
 
-        jres2 = jrev2(x, weights, key_cache, value_cache, dx, dkc, dvc)
-        print("Jax2 rev", jres2)
+        eps = 1e-6
+        assert(self.somewhat_close(jax_res, enzyme_res, eps))
+        assert(self.somewhat_close(jax_res, eqsat_res, eps))
 
-        '''
+        # print(
+        #     "Vanilla",
+        #     timeit.Timer(
+        #         "func(x, weights, key_cache, value_cache)",
+        #         globals={
+        #             "func": func,
+        #             "x": x,
+        #             "weights": weights,
+        #             "key_cache": key_cache,
+        #             "value_cache": value_cache,
+        #         },
+        #     ).timeit(repeats),
+        # )
+
         print(
-            "Enzyme rev",
+            "jax",
             timeit.Timer(
-                "erev(x, weights, key_cache, value_cache, dx, dkc, dvc)",
+                "jax_func(x, weights, key_cache, value_cache)",
                 globals={
-                    "erev": erev,
+                    "jax_func": jax_func,
                     "x": x,
                     "weights": weights,
                     "key_cache": key_cache,
                     "value_cache": value_cache,
-                    "dx": dx,
-                    "dkc": dkc,
-                    "dvc": dvc,
                 },
-            ).timeit(number),
+            ).timeit(repeats),
         )
+        
         print(
-            "JaX rev",
+            "enzyme",
             timeit.Timer(
-                "jrev(x, weights, key_cache, value_cache, dx, dkc, dvc)",
+                "enzyme_func(x, weights, key_cache, value_cache)",
                 globals={
-                    "jrev": jrev,
+                    "enzyme_func": enzyme_func,
                     "x": x,
                     "weights": weights,
                     "key_cache": key_cache,
                     "value_cache": value_cache,
-                    "dx": dx,
-                    "dkc": dkc,
-                    "dvc": dvc,
                 },
-            ).timeit(number),
+            ).timeit(repeats),
         )
+        
         print(
-            "JaX2 rev",
+            "eqsat",
             timeit.Timer(
-                "jrev2(x, weights, key_cache, value_cache, dx, dkc, dvc)",
+                "eqsat_func(x, weights, key_cache, value_cache)",
                 globals={
-                    "jrev2": jrev2,
+                    "eqsat_func": eqsat_func,
                     "x": x,
                     "weights": weights,
                     "key_cache": key_cache,
                     "value_cache": value_cache,
-                    "dx": dx,
-                    "dkc": dkc,
-                    "dvc": dvc,
                 },
-            ).timeit(number),
+            ).timeit(repeats),
         )
-        '''
-
+        
 
 if __name__ == "__main__":
     absltest.main()
