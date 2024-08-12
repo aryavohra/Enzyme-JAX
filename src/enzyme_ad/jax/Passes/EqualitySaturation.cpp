@@ -299,12 +299,64 @@ mlir::RankedTensorType deriveOutputType(mlir::Value &input, llvm::ArrayRef<int64
   return builder.setShape(shape);
 }
 
+llvm::ArrayRef<int64_t> getShape(mlir::Value &input) {
+  auto inputType = input.getType();
+  assert(isa<RankedTensorType>(inputType));
+  auto ranked = inputType.cast<RankedTensorType>();
+  return ranked.getShape();
+}
+
 std::vector<int64_t> rust_vec_to_cpp_vector(tensat::Shape input_slice) {
-    std::vector<int64_t> result;
-    for (const auto& value : input_slice.shape) {
-      result.push_back(value);
+  std::vector<int64_t> result;
+  for (const auto& value : input_slice.shape) {
+    result.push_back(value);
+  }
+  return result;
+}
+
+/**
+ * https://github.com/google/jax/blob/c08656c61d0e2460f5d902b0af808b74c76a48ca/jax/_src/lax/lax.py#L2729
+ */
+std::vector<int64_t> vectorExcept(llvm::ArrayRef<int64_t> &vec,
+                                  std::vector<int64_t> &indices) {
+  std::vector<int64_t> result;
+  for (int i = 0; i < vec.size(); i++) {
+    if (std::find(indices.begin(), indices.end(), i) == indices.end()) {
+      result.push_back(vec[i]);
     }
-    return result;
+  }
+  return result;
+}
+
+/**
+ * https://github.com/google/jax/blob/c08656c61d0e2460f5d902b0af808b74c76a48ca/jax/_src/lax/lax.py#L2720C5-L2720C35
+ */
+std::vector<int64_t> dotGeneralShapeComputation(llvm::ArrayRef<int64_t> &lhs_shape, 
+                                                llvm::ArrayRef<int64_t> &rhs_shape, 
+                                                std::vector<int64_t> &lhs_batch,
+                                                std::vector<int64_t> &rhs_batch,
+                                                std::vector<int64_t> &lhs_contracting,
+                                                std::vector<int64_t> &rhs_contracting) {
+  std::vector<int64_t> batch_shape;
+  for (auto i : lhs_batch) batch_shape.push_back(lhs_shape[i]);
+
+  std::vector<int64_t> lhs_contract_or_batch = lhs_contracting;
+  lhs_contract_or_batch.insert(lhs_contract_or_batch.end(), lhs_batch.begin(), lhs_batch.end());
+  std::sort(lhs_contract_or_batch.begin(), lhs_contract_or_batch.end());
+
+  auto lhs_tensored_shape = vectorExcept(lhs_shape, lhs_contract_or_batch);
+
+  std::vector<int64_t> rhs_contract_or_batch = rhs_contracting;
+  rhs_contract_or_batch.insert(rhs_contract_or_batch.end(), rhs_batch.begin(), rhs_batch.end());
+  std::sort(rhs_contract_or_batch.begin(), rhs_contract_or_batch.end());
+
+  auto rhs_tensored_shape = vectorExcept(rhs_shape, rhs_contract_or_batch);
+
+  auto shape = batch_shape;
+  shape.insert(shape.end(), lhs_tensored_shape.begin(), lhs_tensored_shape.end());
+  shape.insert(shape.end(), rhs_tensored_shape.begin(), rhs_tensored_shape.end());
+
+  return shape;
 }
 
 Operation* createStableHloOp(
@@ -357,7 +409,14 @@ Operation* createStableHloOp(
       std::vector<int64_t> lhs_contract_dim = other_vecs[2];
       std::vector<int64_t> rhs_contract_dim = other_vecs[3];
       std::vector<int64_t> precision_config = other_vecs[4];
-      std::vector<int64_t> shape = other_vecs[5];
+      auto lhs_shape = getShape(operands[0]);
+      auto rhs_shape = getShape(operands[1]);
+      std::vector<int64_t> shape = dotGeneralShapeComputation(
+        lhs_shape, rhs_shape,
+        lhs_batch_dim, rhs_batch_dim,
+        lhs_contract_dim, rhs_contract_dim
+      );
+
       std::vector<Attribute> precisionVec;
 
       for (auto& precision : precision_config) {
@@ -1013,7 +1072,9 @@ namespace {
           auto lhsContractDim = parseNumVec(nodes, nodes[node.operands[4]]);
           auto rhsContractDim = parseNumVec(nodes, nodes[node.operands[5]]);
           auto precisionConfig = parseNumVec(nodes, nodes[node.operands[6]]);
-          auto shape = parseNumVec(nodes, nodes[node.operands[7]]);
+          auto lhsShape = getShape(lhs);
+          auto rhsShape = getShape(rhs);
+          auto shape = dotGeneralShapeComputation(lhsShape, rhsShape, lhsBatchDim, rhsBatchDim, lhsContractDim, rhsContractDim);
 
           auto dotDimensionNumbersAttr = stablehlo::DotDimensionNumbersAttr::get(context, lhsBatchDim, rhsBatchDim, lhsContractDim, rhsContractDim);
           
