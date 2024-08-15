@@ -596,7 +596,7 @@ class Llama(absltest.TestCase):
 
         func = partial(forward, config)
 
-        repeats = 5000
+        repeats = 1000
 
         jax_func = jax.jit(func)
         jax_res = jax_func(x, weights, key_cache, value_cache)
@@ -607,13 +607,13 @@ class Llama(absltest.TestCase):
         # enzyme_pipeline = enzyme_jax.NewXLAPipeline(mlirad=False)
 
         enzyme_func = jax.jit(
-            enzyme_jax.enzyme_jax_ir(argv=argv, pipeline_options=enzyme_pipeline)(func)
+            enzyme_jax.enzyme_jax_ir(argv=argv, pipeline_options=massive_pipeline)(func)
         )
         enzyme_res = enzyme_func(x, weights, key_cache, value_cache)
         
         eqsat_pipeline = enzyme_jax.JaXPipeline(
             "inline{default-pipeline=canonicalize max-iterations=4},"
-            + "equality-saturation-pass,cse,canonicalize,cse"
+            + "equality-saturation-pass"
         )
         eqsat_func = jax.jit(
             enzyme_jax.enzyme_jax_ir(

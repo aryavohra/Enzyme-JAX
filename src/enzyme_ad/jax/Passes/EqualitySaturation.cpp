@@ -441,24 +441,19 @@ Operation* createStableHloOp(
       break;
     }
     case tensat::Ops::SliceOp: {
-      std::vector<int64_t> start_indices = other_vecs[0];
-      std::vector<int64_t> limit_indices = other_vecs[1];
-      std::vector<int64_t> strides = other_vecs[2];
       mlirOp = builder.create<stablehlo::SliceOp>(
-        builder.getUnknownLoc(),
-        operands[0], 
-        start_indices,
-        limit_indices,
-        strides
+        builder.getUnknownLoc(), operands[0], other_vecs[0], other_vecs[1], other_vecs[2]
       );
       break;
     }
     case tensat::Ops::ConcatenateOp: {
       mlirOp = builder.create<stablehlo::ConcatenateOp>(
-        builder.getUnknownLoc(),
-        operands, 
-        int_args[0] 
+        builder.getUnknownLoc(), operands, int_args[0] 
       );
+      break;
+    }
+    case tensat::Ops::PadOp: {
+      mlirOp = builder.create<stablehlo::PadOp>(builder.getUnknownLoc(), operands[0], operands[1], other_vecs[0], other_vecs[1], other_vecs[2]);
       break;
     }
     default:
@@ -897,6 +892,23 @@ namespace {
           { strides.data(), strides.size() },
           { output_shape_array.data(), output_shape_array.size() }
         ).into_raw();
+      } else if (isa<stablehlo::PadOp>(op)) {
+        auto pad = cast<stablehlo::PadOp>(op);
+        auto output_tensor = pad->getResult(0).getType().cast<TensorType>();
+        auto output_shape_array = castArrayRefToInt32(output_tensor.getShape());
+        auto operand = handleOperandPartial(pad.getOperand());
+        auto padding_value = handleOperandPartial(pad.getPaddingValue());
+        auto edge_padding_low = castArrayRefToInt32(pad.getEdgePaddingLow());
+        auto edge_padding_high = castArrayRefToInt32(pad.getEdgePaddingHigh());
+        auto interior_padding = castArrayRefToInt32(pad.getInteriorPadding());
+        tensorInfo = graph->new_pad_op(
+          *operand,
+          *padding_value,
+          { edge_padding_low.data(), edge_padding_low.size() },
+          { edge_padding_high.data(), edge_padding_high.size() },
+          { interior_padding.data(), interior_padding.size() },
+          { output_shape_array.data(), output_shape_array.size() }
+        ).into_raw();
       } else if (isa<func::ReturnOp>(op)) {
         rust::vec<tensat::Shape> shapes;
         int numOperands = op->getNumOperands();
@@ -1104,9 +1116,16 @@ namespace {
           auto limitIndices = parseNumVec(nodes, nodes[node.operands[2]]);
           auto strides = parseNumVec(nodes, nodes[node.operands[3]]);
           newOp = builder.create<stablehlo::SliceOp>(location, operand, startIndices, limitIndices, strides);
+        } else if (node.name == "PadOp") {
+          auto operand = opVals[node.operands[0]];
+          auto paddingValue = opVals[node.operands[1]];
+          auto edgePaddingLow = parseNumVec(nodes, nodes[node.operands[2]]);
+          auto edgePaddingHigh = parseNumVec(nodes, nodes[node.operands[3]]);
+          auto interiorPadding = parseNumVec(nodes, nodes[node.operands[4]]);
+          newOp = builder.create<stablehlo::PadOp>(location, operand, paddingValue, edgePaddingLow, edgePaddingHigh, interiorPadding);
         } else if (node.name == "ReturnOp") {
           auto inputs = parseOpVec(opVals, nodes[node.operands[0]]);
-          newOp = builder.create<func::ReturnOp>(location, inputs);          
+          newOp = builder.create<func::ReturnOp>(location, inputs);       
         } else if (node.name == "blackbox") {
           assert(node.operands.size() > 0);
           size_t numOperands = node.operands.size() - 1;
@@ -1143,8 +1162,8 @@ namespace {
 
     void runOnOperation() override {
       ModuleOp module = getOperation();
-      // std::cout << "ORIGINAL MODULE" << "\n";
-      // module.dump();
+      std::cout << "ORIGINAL MODULE" << "\n";
+      module.dump();
       std::vector<Operation*> blackboxIDToTensorInfo;
       auto context = module->getContext();
       OpBuilder builder(context);
@@ -1154,7 +1173,7 @@ namespace {
       // std::cout << "reconstructing\n";
       reconstructStablehlo(&module, &blackboxIDToTensorInfo, optimized, builder);
       std::cout << "Optimised module" << "\n";
-      // module.dump();
+      module.dump();
     }
   };
 }  // end anonymous namespace
