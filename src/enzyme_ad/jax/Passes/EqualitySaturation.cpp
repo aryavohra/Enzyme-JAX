@@ -466,19 +466,19 @@ Operation* createStableHloOp(
 }
 
 // TODO: Avoid creating dummy inputs (we need them again for cost measurement, so duplicated)
-uint64_t tensat::CostModel::get_cost(
-    Ops op,
+uint64_t tensat::get_cost(
+    tensat::Ops op,
     rust::Vec<tensat::Shape> operand_dims,
-    rust::Vec<Type> operand_types,
+    rust::Vec<tensat::Type> operand_types,
     rust::Vec<tensat::Shape> other_vector_args,
-    rust::Vec<int64_t> int_args) const {
+    rust::Vec<int64_t> int_args) {
   auto context = OperationTimer::getContext();
   OpBuilder builder(context);
 
   // Create operands and other args
   SmallVector<Value> operands;
   for (const auto& [dim_slice, type] : llvm::zip(operand_dims, operand_types)) {
-    auto tensor_type = tensat::CostModel::newTensorType(builder, dim_slice, type);
+    auto tensor_type = tensat::newTensorType(builder, dim_slice, type);
     operands.push_back(OperationTimer::getDummyOp(builder, tensor_type)->getResult(0));
   }
 
@@ -501,14 +501,14 @@ uint64_t tensat::CostModel::get_cost(
   return 100000;
 }
 
-mlir::Type tensat::CostModel::newTensorType(OpBuilder& builder, tensat::Shape &shape, tensat::Type type) {
-	auto dims = shape.shape;
+mlir::Type tensat::newTensorType(OpBuilder& builder, tensat::Shape &shape, tensat::Type type) {
+  auto dims = shape.shape;
   auto dimsRef = llvm::ArrayRef(dims.data(), dims.size());
   auto mlirType = tensatTypeToMlirType(builder, type);
   return RankedTensorType::get(dimsRef, mlirType);
 }
 
-mlir::Type tensat::CostModel::tensatTypeToMlirType(OpBuilder& builder, tensat::Type type) {
+mlir::Type tensat::tensatTypeToMlirType(OpBuilder& builder, tensat::Type type) {
   switch (type) {
     case tensat::Type::i32:
       return builder.getI32Type();
@@ -517,10 +517,6 @@ mlir::Type tensat::CostModel::tensatTypeToMlirType(OpBuilder& builder, tensat::T
     default:
       assert(false);
   }
-}
-
-std::unique_ptr<tensat::CostModel> tensat::newCostModel() {
-  return std::make_unique<tensat::CostModel>();
 }
 
 // SHAPE INFERENCE 
@@ -541,19 +537,19 @@ rust::Vec<int64_t> castArrayRefToRustVec(llvm::ArrayRef<int64_t> shape) {
   return dims;
 }
 
-rust::Vec<tensat::Shape> tensat::ShapeInference::get_shape(
+rust::Vec<tensat::Shape> tensat::get_shape(
     Ops op,
     rust::Vec<tensat::Shape> operand_dims,
     rust::Vec<Type> operand_types,
     rust::Vec<tensat::Shape> other_vector_args,
-    rust::Vec<int64_t> int_args) const {
+    rust::Vec<int64_t> int_args) {
   auto context = OperationTimer::getContext();
   OpBuilder builder(context);
 
   // Create operands and other args
   SmallVector<Value> operands;
   for (const auto& [dim_slice, type] : llvm::zip(operand_dims, operand_types)) {
-    auto tensor_type = tensat::CostModel::newTensorType(builder, dim_slice, type);
+    auto tensor_type = newTensorType(builder, dim_slice, type);
     operands.push_back(OperationTimer::getDummyOp(builder, tensor_type)->getResult(0));
   }
 
@@ -580,9 +576,9 @@ rust::Vec<tensat::Shape> tensat::ShapeInference::get_shape(
   return {};
 }
 
-std::unique_ptr<tensat::ShapeInference> tensat::newShapeInference() {
-  return std::make_unique<tensat::ShapeInference>();
-}
+// std::unique_ptr<tensat::ShapeInference> tensat::newShapeInference() {
+//   return std::make_unique<tensat::ShapeInference>();
+// }
 
 namespace {
   class EqualitySaturationPass
