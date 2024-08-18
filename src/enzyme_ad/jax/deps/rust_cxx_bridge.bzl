@@ -25,10 +25,14 @@ def rust_cxx_bridge(name, src, deps = []):
         name = "%s/include" % name,
         hdrs = [src + ".h"],
         include_prefix = "cxxbridge",
+        alwayslink = True,
+        linkstatic = True,
     )
 
     cc_library(
         name = name,
         srcs = [src + ".cc"],
         deps = deps + [":%s/include" % name],
+        alwayslink = True,
+        linkstatic = True,
     )

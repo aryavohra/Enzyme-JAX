@@ -131,7 +131,6 @@ cc_library(
         ":TransformOpsIncGen",
         ":TransformOpsImplIncGen",
         ":XLADerivatives",
-        ":tensat_lib",
     ],
 )
 
@@ -248,8 +247,7 @@ cc_library(
         ":EnzyeHLOPatternsIncGen",
         ":mhlo-derivatives",
         ":stablehlo-derivatives",
-        ":tensat_bridge/include",
-        ":equality_saturation",
+        ":tensat_lib",
         "@enzyme//:EnzymeMLIR",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:AffineDialect",
@@ -342,7 +340,6 @@ pybind_library(
     ]),
     deps = [
         ":XLADerivatives",
-        "tensat_lib",
         ":TransformOps",
         # This is similar to xla_binary rule and is needed to make XLA client compile.
         "@tsl//tsl/framework:allocator",
@@ -468,11 +465,12 @@ rust_library(
     srcs = glob(["deps/tensat/src/*.rs"]),
     deps = all_crate_deps(
         normal = True,
-    ) + [":tensat_bridge", ":XLADerivatives"],
+    ) + [":tensat_bridge"],
     proc_macro_deps = all_crate_deps(
         proc_macro = True,
     ),
     edition = "2021",
+    alwayslink = True,
 )
 
 rust_binary(
@@ -524,7 +522,6 @@ cc_binary(
     visibility = ["//visibility:public"],
     srcs = ["deps/tensat/src/graph.cc"],
     deps = [
-        ":tensat_bridge",
         ":tensat_lib",
     ]
 )   
