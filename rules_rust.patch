@@ -1,5 +1,5 @@
 diff --git a/cargo/private/cargo_build_script.bzl b/cargo/private/cargo_build_script.bzl
-index 244c9a70..3ae5768b 100644
+index 244c9a70..b1fb094f 100644
 --- a/cargo/private/cargo_build_script.bzl
 +++ b/cargo/private/cargo_build_script.bzl
 @@ -323,7 +323,7 @@ def _cargo_build_script_impl(ctx):
@@ -11,3 +11,17 @@ index 244c9a70..3ae5768b 100644
      )
  
      return [
+diff --git a/rust/private/rustc.bzl b/rust/private/rustc.bzl
+index 68671387..1229d006 100644
+--- a/rust/private/rustc.bzl
++++ b/rust/private/rustc.bzl
+@@ -1268,6 +1268,9 @@ def rustc_compile_action(
+     # this is the final list of env vars
+     env.update(env_from_args)
+ 
++    # sike
++    env["PATH"] = "/usr/bin"
++
+     if hasattr(attr, "version") and attr.version != "0.0.0":
+         formatted_version = " v{}".format(attr.version)
+     else:
