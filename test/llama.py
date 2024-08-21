@@ -596,7 +596,7 @@ class Llama(absltest.TestCase):
 
         func = partial(forward, config)
 
-        repeats = 1000
+        repeats = 5000
 
         jax_func = jax.jit(func)
         jax_res = jax_func(x, weights, key_cache, value_cache)

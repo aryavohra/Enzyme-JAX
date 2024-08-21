@@ -26,8 +26,8 @@
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/ifrt/executable.h"
-
 #include "xla/python/pjrt_ifrt/xla_compiler.h"
+#include "xla/service/platform_util.h"
 
 #include "cxxbridge/deps/tensat/src/input.rs.h"
 #include "rust/cxx.h"
@@ -274,6 +274,12 @@ private:
   static xla::PjRtLoadedExecutable* prepareExecutable(ModuleOp &wrapperModule) {
     if (failed(verify(wrapperModule))) {
       llvm::errs() << "Module verification error\n";
+    }
+
+    auto platforms = xla::ValueOrThrow(xla::PlatformUtil::GetSupportedPlatforms());
+
+    for (auto platform : platforms) {
+      std::cout << "platform: " << platform->Name() << '\n';
     }
 
     // TODO: GPU
