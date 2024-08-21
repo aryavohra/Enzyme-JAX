@@ -278,10 +278,6 @@ private:
 
     auto platforms = xla::ValueOrThrow(xla::PlatformUtil::GetSupportedPlatforms());
 
-    for (auto platform : platforms) {
-      std::cout << "platform: " << platform->Name() << '\n';
-    }
-
     // TODO: GPU
     xla::PjRtClient *client = MakeCPUClient(0, 1, 1);
 
