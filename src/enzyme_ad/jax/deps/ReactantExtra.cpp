@@ -168,7 +168,7 @@ extern "C" void *UnsafeBufferPointer(PjRtBuffer *buffer) {
 
 extern "C" PjRtBuffer *ArrayFromHostBuffer(PjRtClient *client, void *data,
                                            MlirType mtype, size_t dim,
-                                           int64_t *cshape,
+                                           const int64_t *cshape,
                                            PjRtDevice *device) {
   auto primtype = ConvertMlirTypeToPrimitiveType(unwrap(mtype));
   absl::Span<const int64_t> shape(cshape, dim);

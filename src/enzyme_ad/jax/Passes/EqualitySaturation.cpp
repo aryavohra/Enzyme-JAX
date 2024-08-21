@@ -101,17 +101,29 @@ public:
     auto context = OperationTimer::getContext();
 
     ModuleOp wrapperModule = createModuleFromOperation(context, op);
-    auto executable = prepareExecutable(wrapperModule);
+    
+    // TODO: GPU
+    xla::PjRtClient *client = MakeCPUClient(0, 1, 1);
+    auto executable = prepareExecutable(client, wrapperModule);
 
+    unsigned numArgs = op->getNumOperands();
     unsigned numResults = op->getNumResults();
-    xla::PjRtBuffer* res[numResults];
     uint8_t futures = 0;
+
+    xla::PjRtBuffer* args[numArgs];
+    uint8_t isArgDonatable[numArgs];
+    xla::PjRtBuffer* res[numResults];
+
+    for (int i = 0; i < numArgs; i++) {
+      args[i] = getRandomInput(client, op->getOperand(i).getType());
+      isArgDonatable[i] = false;
+    }
 
     auto t1 = std::chrono::high_resolution_clock::now();
 
     for (unsigned i = 0; i < warmup + repetitions; i++) {
       if (i == warmup) t1 = std::chrono::high_resolution_clock::now();
-      XLAExecute(executable, 0, nullptr, nullptr, numResults, res, &futures, nullptr);
+      XLAExecute(executable, numArgs, args, isArgDonatable, numResults, res, &futures, nullptr);
 
       // Cleanup
       for (int i = 0; i < numResults; i++) {
@@ -136,7 +148,6 @@ public:
     return duration;
   }
 
-  // TODO: Look into using input ops, to avoid constant folding etc
   static Operation *getDummyOp(OpBuilder &builder, Type type) {
     // Zero-initialise inputs with same operand shape
     Attribute zeroAttr = builder.getZeroAttr(type);
@@ -227,8 +238,8 @@ private:
   }
 
   /**
-   * Wrap operation into a module, with dummy (constant zero) inputs as
-   * its operands. Doesn't mutate op (instead it creates a copy).
+   * Wrap operation into a module, where its operands are mapped to inputs of main. 
+   * Doesn't mutate op (instead it creates a copy).
    */
   static ModuleOp createModuleFromOperation(MLIRContext *context, Operation *op) {
     // Wrap operation into a module with dummy inputs
@@ -241,23 +252,14 @@ private:
     auto *newOp = cloneOpInContext(builder, op);
 
     // Create a func.func to wrap newOp around
-    FunctionType funcType = FunctionType::get(context, {}, op->getResultTypes());
+    FunctionType funcType = FunctionType::get(context, op->getOperandTypes(), op->getResultTypes());
     func::FuncOp funcOp = builder.create<func::FuncOp>(location, "main", funcType);
     block->push_back(funcOp);
 
     Block *entryBlock = funcOp.addEntryBlock();
 
-    llvm::SmallVector<Value> dummyInputs;
-    auto operandTypes = op->getOperandTypes();
-
-    for (auto type : operandTypes) {
-      Operation *zeroOp = getDummyOp(builder, type);
-      dummyInputs.push_back(zeroOp->getResult(0));
-    }
-
-    for (int i = 0; i < dummyInputs.size(); i++) {
-      newOp->setOperand(i, dummyInputs[i]);
-      entryBlock->push_back(dummyInputs[i].getDefiningOp());
+    for (int i = 0; i < op->getNumOperands(); i++) {
+      newOp->setOperand(i, funcOp.getArgument(i));
     }
 
     entryBlock->push_back(newOp);
@@ -271,19 +273,37 @@ private:
   /**
    * Wrap and compile operation into a PjRtLoadedExecutable, to be passed into XLAExecute.
   */
-  static xla::PjRtLoadedExecutable* prepareExecutable(ModuleOp &wrapperModule) {
+  static xla::PjRtLoadedExecutable* prepareExecutable(xla::PjRtClient *client, ModuleOp &wrapperModule) {
     if (failed(verify(wrapperModule))) {
       llvm::errs() << "Module verification error\n";
     }
 
-    auto platforms = xla::ValueOrThrow(xla::PlatformUtil::GetSupportedPlatforms());
-
-    // TODO: GPU
-    xla::PjRtClient *client = MakeCPUClient(0, 1, 1);
-
     xla::PjRtLoadedExecutable *executable = ClientCompile(client, wrap(wrapperModule));
 
     return executable;
+  }
+
+  /**
+   * Create a PjRtBuffer from a given MLIR type with random elements.
+   */
+
+  static xla::PjRtBuffer* getRandomInput(xla::PjRtClient* client, mlir::Type type) {
+    assert(isa<RankedTensorType>(type)); // TODO: not true in general
+    auto ranked = type.cast<RankedTensorType>();
+    auto elementType = ranked.getElementType();
+    auto shape = ranked.getShape();
+
+    auto width = (elementType.getIntOrFloatBitWidth() + 7) / 8; // round up to nearest byte
+    int numElements = 1;
+    for (auto i : shape) numElements *= i;
+
+    void* data = malloc(width * numElements);
+
+    auto device = ClientGetDevice(client, 0);
+    auto buffer = ArrayFromHostBuffer(client, data, wrap(elementType), shape.size(), shape.data(), device);
+    
+    free(data);
+    return buffer;
   }
 };
 

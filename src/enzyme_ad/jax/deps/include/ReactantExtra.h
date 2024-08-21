@@ -53,7 +53,7 @@ extern "C" void *UnsafeBufferPointer(xla::PjRtBuffer *buffer);
 
 extern "C" xla::PjRtBuffer *ArrayFromHostBuffer(xla::PjRtClient *client, void *data,
                                                 MlirType mtype, size_t dim,
-                                                int64_t *cshape,
+                                                const int64_t *cshape,
                                                 xla::PjRtDevice *device);
 
 extern "C" uint8_t BufferOnCPU(xla::PjRtBuffer *buffer);
