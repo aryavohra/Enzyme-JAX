@@ -14,8 +14,8 @@ inline{default-pipeline=canonicalize max-iterations=4},
 canonicalize,cse,
 canonicalize,
 enzyme-hlo-generate-td{
-patterns=
-compare_op_canon<16>;
+patterns=compare_op_canon<16>;
+transpose_transpose<16>;
 broadcast_in_dim_op_canon<16>;
 convert_op_canon<16>;
 dynamic_broadcast_in_dim_op_not_actually_dynamic<16>;
@@ -34,6 +34,7 @@ merge_consecutive_reshapes<16>;
 transpose_is_reshape<16>;
 zero_extent_tensor_canon<16>;
 reorder_elementwise_and_shape_op<16>;
+
 cse_broadcast_in_dim<16>;
 cse_slice<16>;
 cse_transpose<16>;
@@ -49,6 +50,7 @@ cse_min<16>;
 cse_max<16>;
 cse_neg<16>;
 cse_concatenate<16>;
+
 concatenate_op_canon<16>(1024);
 select_op_canon<16>(1024);
 add_simplify<16>;
@@ -99,57 +101,16 @@ concat_push_binop_mul<1>;
 scatter_to_dynamic_update_slice<1>;
 reduce_concat<1>;
 slice_concat<1>;
+
 bin_broadcast_splat_add<1>;
 bin_broadcast_splat_subtract<1>;
 bin_broadcast_splat_div<1>;
 bin_broadcast_splat_mul<1>;
-reshape_iota<16>;
-slice_reshape_slice<1>;
-dot_general_simplify<16>;
-transpose_simplify<16>;
-reshape_empty_broadcast<1>;
-add_pad_pad_to_concat<1>;
-broadcast_reshape<1>;
-slice_reshape_concat<1>;
-slice_reshape_elementwise<1>;
-slice_reshape_transpose<1>;
-slice_reshape_dot_general<1>;
-concat_pad<1>;
-reduce_pad<1>;
-broadcast_pad<1>;
-zero_product_reshape_pad<1>;
-mul_zero_pad<1>;
-div_zero_pad<1>;
-binop_const_reshape_pad<1>;
-binop_const_pad_add<1>;
-binop_const_pad_subtract<1>;
-binop_const_pad_mul<1>;
-binop_const_pad_div<1>;
-slice_reshape_pad<1>;
-binop_binop_pad_pad_add<1>;
-binop_binop_pad_pad_mul<1>;
-binop_pad_pad_add<1>;
-binop_pad_pad_subtract<1>;
-binop_pad_pad_mul<1>;
-binop_pad_pad_div<1>;
-binop_pad_pad_min<1>;
-binop_pad_pad_max<1>;
-unary_pad_push_convert<1>;
-unary_pad_push_tanh<1>;
-unary_pad_push_exp<1>;
-transpose_pad<1>;
-transpose_dot_reorder<1>;
-dot_transpose<1>;
-convert_convert_float<1>;
-concat_to_pad<1>;
-concat_appending_reshape<1>;
-reshape_iota<1>;
-broadcast_reduce<1>;
-slice_dot_general<1>;
+slice_reshape<1>;
+
 dot_reshape_pad<1>;
 pad_dot_general<1>(1);
-pad_dot_general<1>(0);
-},
+broadcast_reduce<1>;},
 transform-interpreter,
 enzyme-hlo-remove-transform
 )""")
@@ -596,18 +557,19 @@ class Llama(absltest.TestCase):
 
         func = partial(forward, config)
 
-        repeats = 5000
+        repeats = 1000
 
         jax_func = jax.jit(func)
         jax_res = jax_func(x, weights, key_cache, value_cache)
 
         # enzyme_pipeline = enzyme_jax.NewXLAPipeline(mlirad=True)
         # enzyme_pipeline = enzyme_jax.JaXPipeline()
-        enzyme_pipeline = enzyme_jax.OldXLAPipeline()
+        # enzyme_pipeline = enzyme_jax.OldXLAPipeline()
         # enzyme_pipeline = enzyme_jax.NewXLAPipeline(mlirad=False)
+        enzyme_pipeline = massive_pipeline
 
         enzyme_func = jax.jit(
-            enzyme_jax.enzyme_jax_ir(argv=argv, pipeline_options=massive_pipeline)(func)
+            enzyme_jax.enzyme_jax_ir(argv=argv, pipeline_options=enzyme_pipeline)(func)
         )
         enzyme_res = enzyme_func(x, weights, key_cache, value_cache)
         
@@ -642,7 +604,7 @@ class Llama(absltest.TestCase):
         # )
 
         print(
-            "jax",
+            "jax primal",
             timeit.Timer(
                 "jax_func(x, weights, key_cache, value_cache)",
                 globals={
@@ -656,7 +618,7 @@ class Llama(absltest.TestCase):
         )
         
         print(
-            "enzyme",
+            "enzyme primal",
             timeit.Timer(
                 "enzyme_func(x, weights, key_cache, value_cache)",
                 globals={
@@ -670,7 +632,7 @@ class Llama(absltest.TestCase):
         )
         
         print(
-            "eqsat",
+            "eqsat primal",
             timeit.Timer(
                 "eqsat_func(x, weights, key_cache, value_cache)",
                 globals={
@@ -681,8 +643,187 @@ class Llama(absltest.TestCase):
                     "value_cache": value_cache,
                 },
             ).timeit(repeats),
-        )
-        
+        ) 
+
+        if True:    
+            @jax.jit 
+            def jax_fwd(x, dx, weights, dweights, kc, dkc, vc, dvc):
+                return jax.jvp(jax_func, (x, weights, kc, vc), (x, weights, dkc, dvc))
+            jax_fwd_res = jax_fwd(x, dx, weights, dweights, key_cache, key_cache, value_cache, value_cache)
+
+            @jax.jit 
+            def enzyme_fwd(x, dx, weights, dweights, kc, dkc, vc, dvc):
+                return jax.jvp(enzyme_func, (x, weights, kc, vc), (x, weights, dkc, dvc))
+            enzyme_fwd_res = enzyme_fwd(x, dx, weights, dweights, key_cache, key_cache, value_cache, value_cache)
+
+            @jax.jit 
+            def eqsat_fwd(x, dx, weights, dweights, kc, dkc, vc, dvc):
+                return jax.jvp(eqsat_func, (x, weights, kc, vc), (x, weights, dkc, dvc))
+            eqsat_fwd_res = eqsat_fwd(x, dx, weights, dweights, key_cache, key_cache, value_cache, value_cache)
+
+            print(
+                "jax fwd",
+                timeit.Timer(
+                    "jax_fwd(x, dx, weights, dweights, key_cache, key_cache, value_cache, value_cache)",
+                    globals={
+                        "jax_fwd": jax_fwd,
+                        "x": x,
+                        "dx": dx,
+                        "weights": weights,
+                        "dweights": dweights,
+                        "key_cache": key_cache,
+                        "value_cache": value_cache,
+                    },
+                ).timeit(repeats),
+
+                "enzyme fwd",
+                timeit.Timer(
+                    "enzyme_fwd(x, dx, weights, dweights, key_cache, key_cache, value_cache, value_cache)",
+                    globals={
+                        "enzyme_fwd": enzyme_fwd,
+                        "x": x,
+                        "dx": dx,
+                        "weights": weights,
+                        "dweights": dweights,
+                        "key_cache": key_cache,
+                        "value_cache": value_cache,
+                    },
+                ).timeit(repeats),
+
+                "eqsat fwd",
+                timeit.Timer(
+                    "eqsat_fwd(x, dx, weights, dweights, key_cache, key_cache, value_cache, value_cache)",
+                    globals={
+                        "eqsat_fwd": eqsat_fwd,
+                        "x": x,
+                        "dx": dx,
+                        "weights": weights,
+                        "dweights": dweights,
+                        "key_cache": key_cache,
+                        "value_cache": value_cache,
+                    },
+                ).timeit(repeats),
+            )
+
+        if True:
+            @jax.jit
+            def jax_rev(x, weights, kc, vc, dx, dkc, dvc):
+                primals, f_vjp = jax.vjp(jax_func, x, weights, kc, vc)
+                return f_vjp(dx)
+            jax_rev_res = jax_rev(x, weights, key_cache, value_cache, dx, dkc, dvc)
+
+            jax_rev_with_enzyme = jax.jit(
+                enzyme_jax.enzyme_jax_ir(
+                    argv=argv,
+                    pipeline_options=enzyme_pipeline
+                )(jax_rev)
+            ) 
+            jax_rev_with_enzyme_res = jax_rev_with_enzyme(x, weights, key_cache, value_cache, dx, dkc, dvc)
+
+            jax_rev_with_eqsat = jax.jit(
+                enzyme_jax.enzyme_jax_ir(
+                    argv=argv,
+                    pipeline_options=eqsat_pipeline
+                )(jax_rev)
+            )
+            jax_rev_with_eqsat_res = jax_rev_with_eqsat(x, weights, key_cache, value_cache, dx, dkc, dvc)
+            
+            @jax.jit
+            def enzyme_rev(x, weights, kc, vc, dx, dkc, dvc):
+                primals, f_vjp = jax.vjp(enzyme_func, x, weights, kc, vc)
+                return f_vjp(dx)
+            enzyme_rev_res = enzyme_rev(x, weights, key_cache, value_cache, dx, dkc, dvc)
+            
+            @jax.jit
+            def eqsat_rev(x, weights, kc, vc, dx, dkc, dvc):
+                primals, f_vjp = jax.vjp(eqsat_func, x, weights, kc, vc)
+                return f_vjp(dx)
+            eqsat_rev_res = eqsat_rev(x, weights, key_cache, value_cache, dx, dkc, dvc)
+
+            print(
+                "jax rev",
+                timeit.Timer(
+                    "jax_rev(x, weights, key_cache, value_cache, dx, dkc, dvc)",
+                    globals={
+                        "jax_rev": jax_rev,
+                        "x": x,
+                        "weights": weights,
+                        "key_cache": key_cache,
+                        "value_cache": value_cache,
+                        "dx": dx,
+                        "dkc": dkc,
+                        "dvc": dvc,
+                    },
+                ).timeit(repeats),
+            )
+
+            print(
+                "jax rev with enzyme",
+                timeit.Timer(
+                    "jax_rev_with_enzyme(x, weights, key_cache, value_cache, dx, dkc, dvc)",
+                    globals={
+                        "jax_rev_with_enzyme": jax_rev_with_enzyme,
+                        "x": x,
+                        "weights": weights,
+                        "key_cache": key_cache,
+                        "value_cache": value_cache,
+                        "dx": dx,
+                        "dkc": dkc,
+                        "dvc": dvc,
+                    },
+                ).timeit(repeats),
+            )
+            
+            print(
+                "jax rev with eqsat",
+                timeit.Timer(
+                    "jax_rev_with_eqsat(x, weights, key_cache, value_cache, dx, dkc, dvc)",
+                    globals={
+                        "jax_rev_with_eqsat": jax_rev_with_eqsat,
+                        "x": x,
+                        "weights": weights,
+                        "key_cache": key_cache,
+                        "value_cache": value_cache,
+                        "dx": dx,
+                        "dkc": dkc,
+                        "dvc": dvc,
+                    },
+                ).timeit(repeats),
+            )
+
+            print(
+                "enzyme rev",
+                timeit.Timer(
+                    "enzyme_rev(x, weights, key_cache, value_cache, dx, dkc, dvc)",
+                    globals={
+                        "enzyme_rev": enzyme_rev,
+                        "x": x,
+                        "weights": weights,
+                        "key_cache": key_cache,
+                        "value_cache": value_cache,
+                        "dx": dx,
+                        "dkc": dkc,
+                        "dvc": dvc,
+                    },
+                ).timeit(repeats),
+            )
+
+            print(
+                "eqsat rev",
+                timeit.Timer(
+                    "eqsat_rev(x, weights, key_cache, value_cache, dx, dkc, dvc)",
+                    globals={
+                        "eqsat_rev": eqsat_rev,
+                        "x": x,
+                        "weights": weights,
+                        "key_cache": key_cache,
+                        "value_cache": value_cache,
+                        "dx": dx,
+                        "dkc": dkc,
+                        "dvc": dvc,
+                    },
+                ).timeit(repeats),
+            )
 
 if __name__ == "__main__":
     absltest.main()
