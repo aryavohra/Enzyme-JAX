@@ -182,6 +182,9 @@ bool isBlackboxed(Operation *op) {
 
 class OperationTimer {
 public:
+  static std::vector<Operation *> *currentBlackboxIDToTensorInfo;
+  static std::unordered_map<int, std::vector<Value>>
+      *currentBlackboxIDToCapturedValues;
   /**
    * Get cost of operation. This depends on the platform:
    * - if CPU, then we measure the execution time in microseconds by running it
@@ -338,6 +341,7 @@ public:
 private:
   static llvm::DenseMap<Operation *, uint64_t, OperationMapInfo> runtimeCache;
   static MLIRContext *context;
+
   inline static bool logsInitialized;
 
   /**
@@ -346,6 +350,10 @@ private:
    */
   static ModuleOp createModuleFromOperation(MLIRContext *context,
                                             Operation *op) {
+    // return early if called with a ModuleOp
+    if (isa<ModuleOp>(op))
+      return cast<ModuleOp>(*op);
+
     // Wrap operation into a module with dummy inputs
     OpBuilder builder(context);
     Location location = builder.getUnknownLoc();
@@ -469,7 +477,8 @@ private:
 llvm::DenseMap<Operation *, uint64_t, OperationMapInfo>
     OperationTimer::runtimeCache;
 MLIRContext *OperationTimer::context = nullptr;
-
+std::vector<Operation *> *OperationTimer::currentBlackboxIDToTensorInfo = nullptr;
+std::unordered_map<int, std::vector<Value>> *OperationTimer::currentBlackboxIDToCapturedValues = nullptr;
 /**
  * Create a new mlir::RankedTensorType based on the type of an existing
  * mlir::Value and the provided shape.
@@ -972,7 +981,7 @@ createStableHloOp(OpBuilder &builder, tensat::Ops op,
   return mlirOp;
 }
 
-// TODO: Avoid creating dummy inputs (we need them again for cost measurement,
+// TODO: Avoid creating dummy inputs (we need them again for cost measurenment,
 // so duplicated)
 uint64_t tensat::get_cost(tensat::Ops op, rust::Vec<tensat::Tensor> enode_args,
                           rust::Vec<tensat::Vector> other_vector_args,
@@ -1194,7 +1203,6 @@ tensat::get_shape(Ops op, rust::Vec<tensat::Tensor> enode_args,
   return {};
 }
 
-namespace {
 class EqualitySaturationPass
     : public PassWrapper<EqualitySaturationPass, OperationPass<ModuleOp>> {
 public:
@@ -1630,15 +1638,17 @@ public:
   }
 
   template <typename T>
-  Operation *createUnaryOp(OpBuilder &builder, std::vector<Value> &opVals,
-                           tensat::Node &node) {
+  static Operation *createUnaryOp(OpBuilder &builder,
+                                  std::vector<Value> &opVals,
+                                  tensat::Node &node) {
     auto location = builder.getUnknownLoc();
     return builder.create<T>(location, opVals[node.operands[0]]);
   }
 
   template <typename T>
-  Operation *createBinaryOp(OpBuilder &builder, std::vector<Value> &opVals,
-                            tensat::Node &node) {
+  static Operation *createBinaryOp(OpBuilder &builder,
+                                   std::vector<Value> &opVals,
+                                   tensat::Node &node) {
     auto location = builder.getUnknownLoc();
     return builder.create<T>(location, opVals[node.operands[0]],
                              opVals[node.operands[1]]);
@@ -1648,8 +1658,8 @@ public:
    * Parse the Vec nodes with Nums (e.g Vec(Num(128), Num(128))) emitted by
    * tensat node construction.
    */
-  std::vector<int64_t> parseNumVec(rust::vec<tensat::Node> &nodes,
-                                   tensat::Node &seq) {
+  static std::vector<int64_t> parseNumVec(rust::vec<tensat::Node> &nodes,
+                                          tensat::Node &seq) {
     assert(seq.op == tensat::Ops::Vec);
     std::vector<int64_t> result;
 
@@ -1666,7 +1676,7 @@ public:
    * Parse the Vec nodes with Vecs (e.g Vec(Vec(128, 128), Vec(128, 128)))
    * emitted by tensat node construction.
    */
-  mlir::DenseIntElementsAttr
+  static mlir::DenseIntElementsAttr
   parseNumMatrixToDenseAttr(rust::vec<tensat::Node> &nodes, tensat::Node &seq,
                             mlir::Builder &builder) {
     assert(seq.op == tensat::Ops::Vec);
@@ -1685,7 +1695,8 @@ public:
    * Our protocol is to encode integer values as operand indices.
    * TODO: improve this!
    */
-  int64_t parseNumNode(rust::vec<tensat::Node> &nodes, tensat::Node &seq) {
+  static int64_t parseNumNode(rust::vec<tensat::Node> &nodes,
+                              tensat::Node &seq) {
     assert(seq.op == tensat::Ops::Num);
     return seq.operands[0];
   }
@@ -1694,7 +1705,8 @@ public:
    * Parse the Vec nodes with arbitrary operations (e.g Vec(Input(...),
    * AddOp(...))) emitted by tensat node construction.
    */
-  std::vector<Value> parseOpVec(std::vector<Value> &opVals, tensat::Node &seq) {
+  static std::vector<Value> parseOpVec(std::vector<Value> &opVals,
+                                       tensat::Node &seq) {
     assert(seq.op == tensat::Ops::Vec);
     std::vector<Value> result;
 
@@ -1706,7 +1718,7 @@ public:
     return result;
   }
 
-  void reconstructStablehlo(
+  static void reconstructStablehlo(
       ModuleOp *root, std::vector<Operation *> *blackboxIDToTensorInfo,
       std::unordered_map<int, std::vector<Value>> *blackboxIDToCapturedValues,
       rust::vec<tensat::Node> &nodes, OpBuilder &builder) {
@@ -2453,6 +2465,9 @@ public:
     for (int i = 0; i < segmentedModules.size(); ++i) {
       std::vector<Operation *> blackboxIDToTensorInfo;
       std::unordered_map<int, std::vector<Value>> blackboxIDToCapturedValues;
+      OperationTimer::currentBlackboxIDToTensorInfo = &blackboxIDToTensorInfo;
+      OperationTimer::currentBlackboxIDToCapturedValues =
+          &blackboxIDToCapturedValues;
 
       auto &segmentedModule = segmentedModules[i];
       // llvm::errs() << "Creating egraph for segment " << i + 1 << " of "
@@ -2478,7 +2493,28 @@ public:
     llvm::errs() << "EqualitySaturationPass completed.\n";
   }
 };
-} // end anonymous namespace
+
+uint64_t tensat::get_graph_cost(rust::Vec<tensat::Node> nodes) {
+  auto context = OperationTimer::getContext();
+  OpBuilder builder(context);
+  ModuleOp root = ModuleOp::create(builder.getUnknownLoc());
+  EqualitySaturationPass::reconstructStablehlo(
+      &root, OperationTimer::currentBlackboxIDToTensorInfo,
+      OperationTimer::currentBlackboxIDToCapturedValues, nodes, builder);
+  int repeats = 0;
+  switch (getPlatform()) {
+  case CPU:
+    repeats = 200;
+    break;
+  case GPU:
+    // TODO: Review this number
+    repeats = 30;
+    break;
+  default:
+    assert(false);
+  }
+  return OperationTimer::getCost(&cast<Operation>(root), repeats, repeats);
+}
 
 namespace mlir {
 namespace enzyme {

@@ -3,6 +3,7 @@ use crate::optimize::*;
 use crate::rewrites::*;
 use cxx::CxxVector;
 use egg::*;
+use ffi::get_graph_cost;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -18,7 +19,7 @@ pub mod ffi {
         i1,
         i32,
         bf16,
-        f32
+        f32,
     }
 
     enum Ops {
@@ -328,6 +329,8 @@ pub mod ffi {
             int_args: Vec<i64>,
             matrix_args: Vec<Matrix>,
         ) -> u64;
+
+        fn get_graph_cost(graph: Vec<Node>) -> u64;
     }
 
     unsafe extern "C++" {
@@ -474,7 +477,9 @@ impl CppGraphConverter {
         let new_node = Mdl::Index([index_num_node, inpt.id]);
         let res = TensorInfo {
             id: self.rec_expr.add(new_node),
-            tensor_data: CppGraphConverter::tensor_data(vec![inpt.tensor_data.tensors[index as usize].clone()]),
+            tensor_data: CppGraphConverter::tensor_data(vec![inpt.tensor_data.tensors
+                [index as usize]
+                .clone()]),
         };
         Box::new(res)
     }
@@ -1032,7 +1037,7 @@ impl CppGraphConverter {
         &self,
         egraph: &EGraph<Mdl, TensorAnalysis>,
         to_egraph: &HashMap<Id, Id>,
-        rec_expr: RecExpr<Mdl>
+        rec_expr: RecExpr<Mdl>,
     ) -> Vec<ffi::Node> {
         let mut res: Vec<ffi::Node> = Vec::new();
 
@@ -1069,9 +1074,11 @@ impl CppGraphConverter {
                 Mdl::InferReshape([input]) => {
                     let input_index = index(*input);
                     let id = to_egraph[&Id::from(i)];
-                    let mut operands: Vec<i32> =
-                        (&egraph[id]).data.tensors[0].shape
-                            .iter().map(|x| *x as i32).collect();
+                    let mut operands: Vec<i32> = (&egraph[id]).data.tensors[0]
+                        .shape
+                        .iter()
+                        .map(|x| *x as i32)
+                        .collect();
                     operands.insert(0, input_index);
                     ffi::Node {
                         op,
@@ -1112,6 +1119,16 @@ impl CppGraphConverter {
         }
 
         res
+    }
+
+    pub fn get_end_to_end_cost(
+        &self,
+        egraph: &EGraph<Mdl, TensorAnalysis>,
+        to_egraph: &HashMap<Id, Id>,
+        rec_expr: RecExpr<Mdl>,
+    ) -> u64 {
+        let nodes = self.convert_to_node(egraph, to_egraph, rec_expr);
+        get_graph_cost(nodes)
     }
 
     pub fn optimize<'a>(&'a self) -> Vec<ffi::Node> {
@@ -1361,7 +1378,14 @@ fn extract_by_ilp(
         let mut expr = RecExpr::default();
         let mut added_memo: HashMap<Id, Id> = Default::default();
         let mut to_egraph: HashMap<Id, Id> = Default::default();
-        let _ = construct_best_rec(&node_picked, root, &mut added_memo, &mut to_egraph, egraph, &mut expr);
+        let _ = construct_best_rec(
+            &node_picked,
+            root,
+            &mut added_memo,
+            &mut to_egraph,
+            egraph,
+            &mut expr,
+        );
         (expr, solved_data.time, to_egraph)
     } else {
         panic!("Python script failed");
