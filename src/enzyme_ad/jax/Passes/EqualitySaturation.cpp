@@ -477,8 +477,10 @@ private:
 llvm::DenseMap<Operation *, uint64_t, OperationMapInfo>
     OperationTimer::runtimeCache;
 MLIRContext *OperationTimer::context = nullptr;
-std::vector<Operation *> *OperationTimer::currentBlackboxIDToTensorInfo = nullptr;
-std::unordered_map<int, std::vector<Value>> *OperationTimer::currentBlackboxIDToCapturedValues = nullptr;
+std::vector<Operation *> *OperationTimer::currentBlackboxIDToTensorInfo =
+    nullptr;
+std::unordered_map<int, std::vector<Value>>
+    *OperationTimer::currentBlackboxIDToCapturedValues = nullptr;
 /**
  * Create a new mlir::RankedTensorType based on the type of an existing
  * mlir::Value and the provided shape.
@@ -2111,10 +2113,25 @@ public:
     auto context = builder.getContext();
     Block &entryBlock = funcOp.getBody().front();
 
+    const char* env_var = getenv("SEGMENTATION_THRESHOLD");
+    int segmentThreshold = 70; // Default value
+    if (env_var == nullptr || *env_var == '\0') {
+        segmentThreshold = 70;
+    } else {
+        // Attempt to convert the environment variable to an integer
+        char* endptr;
+        long parsedValue = std::strtol(env_var, &endptr, 10);
+        if (*endptr != '\0' || endptr == env_var || parsedValue < INT_MIN || parsedValue > INT_MAX) {
+            std::ostringstream error_string;
+            error_string << "Invalid value for SEGMENTATION_THRESHOLD: should be an integer, but was passed '" 
+                         << env_var << "'";
+            throw std::invalid_argument(error_string.str());
+        }
+        segmentThreshold = static_cast<int>(parsedValue);
+    }
+    
     // First pass to determine segmentation points and necessary types.
     // TODO: abstract out as separate function
-
-    const int segmentThreshold = 70;
     SmallVector<SegmentationPoint> segmentationPoints;
     SmallVector<Operation *> currentOps;
     SegmentationPoint segment;

@@ -1242,9 +1242,13 @@ impl CppGraphConverter {
         let (egraph, root) = (runner.egraph, runner.roots[0]);
         let cost_model: CostModel = CostModel::new();
         let (best, ext_secs, to_egraph) = extract_by_ilp(&egraph, root, &cost_model);
+
         // let (best, ext_secs) = extract_by_greedy(&egraph, root, &cost_model);
 
-        // println!("{}", best);
+        // println!(
+        //     "{}",
+        //     self.get_end_to_end_cost(&egraph, &to_egraph, best.clone())
+        // );
         self.convert_to_node(&egraph, &to_egraph, best)
     }
 }
